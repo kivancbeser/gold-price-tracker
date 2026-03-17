@@ -339,6 +339,47 @@ def _meta_price(html: str) -> Optional[float]:
 #  SITE-SPECIFIC PARSERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def fetch_hb_html_requests(url: str) -> Optional[str]:
+    """
+    Fetch a Hepsiburada page using the requests library instead of Playwright.
+    Headless Chrome triggers HB's bot detection; a plain HTTP request with a
+    realistic browser User-Agent often bypasses it.
+    Returns the HTML string, or None on failure.
+    """
+    if not REQUESTS_OK:
+        return None
+    try:
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": ("text/html,application/xhtml+xml,application/xml;"
+                       "q=0.9,image/avif,image/webp,*/*;q=0.8"),
+            "Accept-Language":           "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding":           "gzip, deflate, br",
+            "DNT":                       "1",
+            "Connection":                "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest":            "document",
+            "Sec-Fetch-Mode":            "navigate",
+            "Sec-Fetch-Site":            "none",
+            "Sec-Ch-Ua":                 '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "Sec-Ch-Ua-Mobile":          "?0",
+            "Sec-Ch-Ua-Platform":        '"Windows"',
+        }
+        r = _requests.get(url, headers=headers, timeout=20, allow_redirects=True)
+        r.raise_for_status()
+        html = r.text
+        has_app = "__PRODUCT_DETAIL_APP__" in html
+        has_price = bool(re.search(r'data-test-id="(checkout-price|price)"', html))
+        log.info(f"  📡 HB requests fallback — "
+                 f"PRODUCT_APP={'✓' if has_app else '✗'}  "
+                 f"price-element={'✓' if has_price else '✗'}  "
+                 f"size={len(html):,}b")
+        return html
+    except Exception as e:
+        log.debug(f"  HB requests fallback failed: {e}")
+        return None
+
+
 def fetch_live_gold_price_try() -> Optional[float]:
     """
     Fetch today's live gram-gold price (24-ayar) from bigpara.hurriyet.com.tr
@@ -645,6 +686,20 @@ def parse_amazon(html: str, url: str, weight: str) -> Product:
             candidate = sanity_check(parse_try_price(mm.group(1).rstrip(".,")), weight)
             if candidate:
                 price = candidate
+                break
+
+    # ── Strategy 5: a-offscreen span — Amazon's accessible price text ─────────
+    # e.g. <span class="a-offscreen">₺74.476,53</span>
+    # This is the most reliable Amazon price signal — used for screen readers.
+    if not price:
+        for mm in re.finditer(
+            r'class="a-offscreen"[^>]*>\s*[₺TL]?\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)',
+            html, re.I,
+        ):
+            candidate = sanity_check(parse_try_price(mm.group(1)), weight)
+            if candidate:
+                price = candidate
+                log.debug(f"  Amazon: price from a-offscreen: {price}")
                 break
 
     # ── Seller / merchant name ─────────────────────────────────────────────────
@@ -1186,6 +1241,21 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                     log.exception(f"  ✗ Parser exception: {exc}")
                     product = Product(site=site, name="N/A", weight=weight, price=None,
                                       url=url, status="error", error_msg=str(exc))
+
+            # ── HB fallback: if Playwright got bot-blocked, try requests ──────
+            if (product.status in ("price_not_found", "error")
+                    and "hepsiburada.com" in urlparse(url).netloc.lower()):
+                log.info("  🔄 HB Playwright failed → trying requests fallback…")
+                html_fb = fetch_hb_html_requests(url)
+                if html_fb:
+                    try:
+                        product = parse_hepsiburada(html_fb, url, weight, js_data={})
+                        if product.status == "ok":
+                            log.info(f"  ✓ HB requests fallback OK: {fmt_price(product.price)}")
+                        else:
+                            log.warning("  ⚠ HB requests fallback: price still not found")
+                    except Exception as exc:
+                        log.debug(f"  HB requests fallback parse error: {exc}")
 
             if product.status == "ok":
                 log.info(f"  ✓ {fmt_price(product.price)}  ({fmt_price(product.price_pgr)}/g)")
