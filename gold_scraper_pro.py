@@ -109,6 +109,7 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         {"url": "https://www.amazon.com.tr/AgaKulche-Gram-Ayar-Ajda-Bilezik/dp/B0F1YWKCQF",               "site": "Amazon TR"},
         {"url": "https://www.amazon.com.tr/i%C5%9F%C3%A7iliksiz-Parlak-Bilezik-Ziynet-Gold/dp/B0CV7GXRRL","site": "Amazon TR"},
         # N11
+        {"url": "https://www.n11.com/urun/agakulche-10-gram-22-ayar-ajda-altin-bilezik-53891989",          "site": "N11"},
         {"url": "https://www.n11.com/urun/10-gr-gram-22-ayar-ajda-bilezik-aajd10-54988148",                "site": "N11"},
         {"url": "https://www.n11.com/urun/22-ayar-10-gram-ajda-bilezik-19290476",                          "site": "N11"},
         # Idefix
@@ -744,17 +745,40 @@ def parse_n11(html: str, url: str, weight: str) -> Product:
                        url=url, status="out_of_stock")
 
     price: Optional[float] = None
-    for pat in [
-        r'class="[^"]*newPrice[^"]*"[^>]*>\s*<[^>]+>\s*([\d.,\s₺TL]+)',
-        r'class="[^"]*price[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
-        r'itemprop="price"\s+content="([^"]+)"',
-        r'"price":\s*"?([\d.,]+)"?',
-    ]:
-        mm = re.search(pat, html, re.I)
+
+    # ── Priority 1: "SEPETTE" (basket) price ─────────────────────────────────
+    # N11 shows two prices: old-price (regular) and price-currency (cart/basket).
+    # HTML:  <div class="price-badge" style="color:#FF44EE;">SEPETTE</div>
+    #        <div class="price-currency">75.319,08 TL</div>
+    # We ALWAYS prefer price-currency — it is the actual checkout price whether
+    # or not there is a SEPETTE badge (if no discount it equals the regular price).
+    mm = re.search(r'class="price-currency"[^>]*>\s*([\d.,\s₺TL]+)', html, re.I)
+    if mm:
+        price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
+        if price:
+            log.debug(f"  N11: price from price-currency (sepette): {price}")
+
+    # ── Priority 2: basket-price block vicinity (card listing) ───────────────
+    # Used on search/listing pages where price-currency is nested differently.
+    if not price:
+        mm = re.search(r'class="[^"]*basket-price[^"]*".*?'
+                       r'class="price-currency"[^>]*>\s*([\d.,\s₺TL]+)',
+                       html, re.I | re.S)
         if mm:
             price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
-            if price:
-                break
+
+    # ── Priority 3: newPrice (standard sale label) ────────────────────────────
+    if not price:
+        for pat in [
+            r'class="[^"]*newPrice[^"]*"[^>]*>\s*<[^>]+>\s*([\d.,\s₺TL]+)',
+            r'itemprop="price"\s+content="([^"]+)"',
+            r'"price":\s*"?([\d.,]+)"?',
+        ]:
+            mm = re.search(pat, html, re.I)
+            if mm:
+                price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
+                if price:
+                    break
 
     if not price:
         price = sanity_check(_json_ld_price(html), weight) or \
@@ -765,6 +789,9 @@ def parse_n11(html: str, url: str, weight: str) -> Product:
         r'"merchantName"\s*:\s*"([^"]{2,60})"',
         r'class="[^"]*seller[^"]*name[^"]*"[^>]*>\s*([^<]{2,60})',
         r'[Ss]atıcı[:\s]{1,5}<[^>]+>([^<]{2,60})',
+        # N11 store name in URL param ?magaza= or seller page link
+        r'class="[^"]*store[^"]*name[^"]*"[^>]*>\s*([^<]{2,60})',
+        r'"storeName"\s*:\s*"([^"]{2,60})"',
     ])
 
     if price is None:
