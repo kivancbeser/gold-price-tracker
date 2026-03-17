@@ -158,7 +158,9 @@ HEADLESS       = True     # set False to watch the browser while debugging
 # Fallback: 5,500 TRY/g (conservative lower bound, well below market).
 # Actual threshold = live_22ayar_price × SANITY_RATIO (e.g. 0.88 = allow 12% below market).
 MIN_PRICE_PER_GRAM_TRY: float = 5_500.0
+MAX_PRICE_PER_GRAM_TRY: float = 50_000.0  # upper bound — also overwritten at startup
 SANITY_RATIO           : float = 0.88   # products priced below 88% of market are rejected
+MAX_SANITY_RATIO       : float = 2.50   # products priced above 250% of market are rejected
 
 # Weight as integer grams — used for price-per-gram calculation
 WEIGHT_GRAMS: Dict[str, int] = {"5g": 5, "10g": 10, "15g": 15, "20g": 20}
@@ -248,12 +250,18 @@ def parse_try_price(raw: str) -> Optional[float]:
 
 
 def sanity_check(price: Optional[float], weight: str) -> Optional[float]:
-    """Return None if price is implausibly low for 22-ayar gold."""
+    """Return None if price is implausibly low OR absurdly high for 22-ayar gold."""
     if price is None:
         return None
     grams = WEIGHT_GRAMS.get(weight, 1)
-    if price / grams < MIN_PRICE_PER_GRAM_TRY:
-        log.debug(f"  Sanity-failed price {price} for {weight} ({price/grams:.0f} TRY/g < min {MIN_PRICE_PER_GRAM_TRY})")
+    per_gram = price / grams
+    if per_gram < MIN_PRICE_PER_GRAM_TRY:
+        log.debug(f"  Sanity-failed (too low)  {price} for {weight} "
+                  f"({per_gram:.0f} TRY/g < min {MIN_PRICE_PER_GRAM_TRY:.0f})")
+        return None
+    if per_gram > MAX_PRICE_PER_GRAM_TRY:
+        log.debug(f"  Sanity-failed (too high) {price} for {weight} "
+                  f"({per_gram:.0f} TRY/g > max {MAX_PRICE_PER_GRAM_TRY:.0f})")
         return None
     return price
 
@@ -443,7 +451,21 @@ def parse_hepsiburada(html: str, url: str, weight: str,
                 # Smallest value in block = discounted cart price
                 price = sanity_check(min(candidates), weight)
 
-    # ── Priority 3b: "Sepete Özel Fiyat" or "Sepette İndirim" label ──────────
+    # ── Priority 3b: Targeted label → next-sibling div pattern ──────────────
+    # From actual HB HTML:
+    #   <span ...>Sepete özel fiyat</span></div>
+    #   <div ...>74.121,69 TL</div>
+    # The price div IMMEDIATELY follows the label-container closing tag.
+    if not price:
+        mm = re.search(
+            r'[Ss]epete\s+[öo]zel\s+fiyat\s*</span>\s*</div>\s*'
+            r'<div[^>]*>\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{0,2})?)\s*(?:TL|₺)',
+            html, re.I,
+        )
+        if mm:
+            price = sanity_check(parse_try_price(mm.group(1)), weight)
+
+    # ── Priority 3c: "Sepette İndirim" label vicinity ────────────────────────
     if not price:
         for label_pat in [
             r'[Ss]epete?\s*[Öö]zel\s*[Ff]iyat',
@@ -500,6 +522,9 @@ def parse_hepsiburada(html: str, url: str, weight: str,
     # ── Priority 5: seller name from HTML if still missing ────────────────────
     if not seller:
         for pat in [
+            # data-hbus attribute: HTML-encoded JSON — e.g. &quot;merchant_name&quot;:&quot;AHLATCI&quot;
+            # This is the MOST RELIABLE source — comes from HB's own tracking JSON
+            r'&quot;merchant_name&quot;:&quot;([A-Z0-9ÇŞİÖÜa-zçşıöü_\- ]{2,60})&quot;',
             r'data-test-id="merchant-name"[^>]*>\s*([^<]{2,60})',   # HB stable id
             r'"merchant_name"\s*:\s*"([^"]{2,60})"',                # GTM dataLayer (snake_case)
             r'"merchantName"\s*:\s*"([^"]{2,60})"',
@@ -568,11 +593,9 @@ def parse_amazon(html: str, url: str, weight: str) -> Product:
     # ── Strategy 1: isolate the main price block first, then search inside it ──
     # Amazon has multiple a-price elements (strikethrough, instalment, etc.)
     # The real price lives inside #corePriceDisplay_desktop_feature_div
-    main_block_match = re.search(
-        r'id="corePriceDisplay_desktop_feature_div"(.*?)</div>\s*</div>',
-        html, re.S | re.I,
-    )
-    search_scope = main_block_match.group(1) if main_block_match else html
+    # Use a wide positional slice instead of fragile regex to avoid cutting off too early.
+    m_start = re.search(r'id="corePriceDisplay_desktop_feature_div"', html, re.I)
+    search_scope = html[m_start.start(): m_start.start() + 4000] if m_start else html
 
     # Within that block, grab a-price-whole + a-price-fraction
     m_whole = re.search(r'class="a-price-whole"[^>]*>([\d.,]+)', search_scope, re.I)
@@ -706,6 +729,8 @@ def parse_idefix(html: str, url: str, weight: str) -> Product:
                 sanity_check(_meta_price(html), weight)
 
     seller = _extract_seller_html(html, [
+        # Idefix: <a href="/satici/SELLER-SLUG">SELLER NAME</a>
+        r'<a[^>]+href="/satici/[^"]*"[^>]*>\s*([^<]{2,60})',
         r'"brand"\s*:\s*"([^"]{2,60})"',
         r'"sellerName"\s*:\s*"([^"]{2,60})"',
         r'class="[^"]*(?:brand|seller|merchant)[^"]*"[^>]*>\s*([^<]{2,60})',
@@ -766,10 +791,46 @@ async def _new_context(browser: Browser, block_assets: bool = True) -> BrowserCo
         },
     )
     await ctx.add_init_script("""
+        // ── Hide all headless / automation signals ────────────────────────────
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        window.chrome = { runtime: {} };
-        Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['tr-TR','tr','en-US','en'] });
+        delete navigator.__proto__.webdriver;
+
+        // Realistic chrome object
+        window.chrome = {
+            runtime: { onMessage: { addListener: ()=>{} }, id: undefined },
+            loadTimes: function(){ return {}; },
+            csi:        function(){ return {}; },
+            app:        { isInstalled: false },
+        };
+
+        // Realistic plugins list (3 common ones)
+        Object.defineProperty(navigator, 'plugins', { get: () => {
+            var mimeTypes = { length: 0 };
+            var plugins = [
+                { name:'Chrome PDF Plugin',  filename:'internal-pdf-viewer',    description:'Portable Document Format', length:1, 0:{type:'application/x-google-chrome-pdf'} },
+                { name:'Chrome PDF Viewer',  filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'',                  length:1, 0:{type:'application/pdf'} },
+                { name:'Native Client',      filename:'internal-nacl-plugin',   description:'',                          length:2, 0:{type:'application/x-nacl'}, 1:{type:'application/x-pnacl'} },
+            ];
+            plugins.length = 3;
+            plugins.item = function(i){ return plugins[i]; };
+            plugins.namedItem = function(n){ return plugins.find(p=>p.name===n)||null; };
+            plugins.refresh = function(){};
+            return plugins;
+        }});
+
+        Object.defineProperty(navigator, 'languages',          { get: () => ['tr-TR','tr','en-US','en'] });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+        Object.defineProperty(navigator, 'deviceMemory',        { get: () => 8 });
+        Object.defineProperty(navigator, 'maxTouchPoints',      { get: () => 0 });
+        Object.defineProperty(screen,    'colorDepth',          { get: () => 24 });
+        Object.defineProperty(screen,    'pixelDepth',          { get: () => 24 });
+
+        // Spoof permissions to avoid automation detection
+        const _origPerms = window.navigator.permissions.query.bind(navigator.permissions);
+        window.navigator.permissions.query = (p) =>
+            p.name === 'notifications'
+                ? Promise.resolve({ state: Notification.permission })
+                : _origPerms(p);
     """)
     return ctx
 
@@ -877,7 +938,19 @@ _HB_JS_COMBINED = """
             if (fbEl) result.price = fbEl.innerText;
         }
 
-        // ── 6. Seller from DOM ────────────────────────────────────────────────
+        // ── 6. data-hbus attribute — HB embeds merchant_name as JSON ─────────
+        // This is the most reliable source: &quot;merchant_name&quot;:&quot;AHLATCI&quot;
+        if (!result.seller) {
+            try {
+                var hbusEl = document.querySelector('[data-hbus*="merchant_name"]');
+                if (hbusEl) {
+                    var hbusData = JSON.parse(hbusEl.getAttribute('data-hbus'));
+                    result.seller = (hbusData.data && hbusData.data.merchant_name) || null;
+                }
+            } catch(e3) {}
+        }
+
+        // ── 7. Seller from DOM fallback ───────────────────────────────────────
         if (!result.seller) {
             var selEl = document.querySelector('[data-test-id="merchant-name"]')
                      || document.querySelector('[class*="merchant-name"]')
@@ -924,45 +997,70 @@ async def fetch_page_pw(browser: Browser, url: str) -> Tuple[Optional[str], Opti
 
         # ── Hepsiburada: wait → networkidle → scroll → JS extractor ─────────
         if is_hb:
-            # Step 1: wait for any price element to appear
+            # Step 1: simulate human-like mouse movement before page interacts
+            await page.mouse.move(
+                random.randint(300, 700), random.randint(100, 300)
+            )
+            await asyncio.sleep(random.uniform(0.3, 0.7))
+            await page.mouse.move(
+                random.randint(500, 900), random.randint(300, 600)
+            )
+            await asyncio.sleep(random.uniform(0.2, 0.5))
+
+            # Step 2: wait for any price element to appear
             try:
                 await page.wait_for_selector(
                     '[data-test-id="checkout-price"], [data-test-id="price"], '
                     '[data-bind*="displayedPriceValue"], [class*="price-value"], '
                     '[class*="currentPrice"], [itemprop="price"]',
-                    timeout=14_000,
+                    timeout=18_000,
                 )
             except PWTimeout:
                 log.warning("  ⚠ HB: price selector timeout — proceeding anyway")
 
-            # Step 2: wait for JS bundle to finish loading
+            # Step 3: wait for JS bundle to finish loading
             try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
+                await page.wait_for_load_state("networkidle", timeout=15_000)
             except PWTimeout:
                 pass
 
-            # Step 3: scroll to trigger lazy-render, then wait
-            await page.evaluate("window.scrollBy(0, 600)")
-            await asyncio.sleep(3.5)   # give Knockout / React hydration time
+            # Step 4: scroll to trigger lazy-render, then wait
+            await page.evaluate("window.scrollBy(0, 400)")
+            await asyncio.sleep(1.5)
+            await page.evaluate("window.scrollBy(0, 400)")
+            await asyncio.sleep(2.5)   # give Knockout / React hydration time
 
-            # Step 4: run combined JS extractor
-            try:
-                raw = await page.evaluate(_HB_JS_COMBINED)
-                if raw:
-                    parsed = json.loads(raw)
-                    for key in ("cartPrice", "price"):
-                        val = parse_try_price(str(parsed.get(key) or ""))
-                        if val and val > 1000:
-                            js_data[key] = val
-                            log.info(f"  🟠 HB JS {key}: {val:,.2f}")
-                    seller_raw = (parsed.get("seller") or "").strip()
-                    if seller_raw:
-                        js_data["seller"] = seller_raw
-                        log.info(f"  🟠 HB JS seller: {seller_raw}")
-                    if not any(js_data.get(k) for k in ("cartPrice", "price")):
-                        log.warning("  ⚠ HB JS: no price found in page — may be bot-blocked")
-            except Exception as e:
-                log.warning(f"  ⚠ HB JS extractor error: {e}")
+            # Step 5: run combined JS extractor
+            async def _run_hb_js() -> None:
+                try:
+                    raw = await page.evaluate(_HB_JS_COMBINED)
+                    if raw:
+                        parsed = json.loads(raw)
+                        for key in ("cartPrice", "price"):
+                            val = parse_try_price(str(parsed.get(key) or ""))
+                            if val and val > 1000:
+                                js_data[key] = val
+                                log.info(f"  🟠 HB JS {key}: {val:,.2f}")
+                        seller_raw = (parsed.get("seller") or "").strip()
+                        if seller_raw:
+                            js_data["seller"] = seller_raw
+                            log.info(f"  🟠 HB JS seller: {seller_raw}")
+                except Exception as e:
+                    log.warning(f"  ⚠ HB JS extractor error: {e}")
+
+            await _run_hb_js()
+
+            # Step 6: if no price yet, scroll to bottom then top, wait, retry
+            if not any(js_data.get(k) for k in ("cartPrice", "price")):
+                log.info("  🔄 HB: no price on first pass — extra scroll + retry…")
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 3)")
+                await asyncio.sleep(2.0)
+                await page.evaluate("window.scrollTo(0, 0)")
+                await asyncio.sleep(1.5)
+                await _run_hb_js()
+
+            if not any(js_data.get(k) for k in ("cartPrice", "price")):
+                log.warning("  ⚠ HB JS: no price found — possibly bot-blocked or captcha")
 
         else:
             try:
@@ -973,6 +1071,24 @@ async def fetch_page_pw(browser: Browser, url: str) -> Tuple[Optional[str], Opti
             await asyncio.sleep(random.uniform(0.5, 1.2))
 
         html = await page.content()
+
+        # ── Diagnostics for Hepsiburada (INFO level so always visible) ────────
+        if is_hb:
+            has_checkout  = 'data-test-id="checkout-price"' in html
+            has_sepete    = bool(re.search(r'[Ss]epete\s+[öo]zel\s+fiyat', html))
+            has_hbus      = 'data-hbus' in html
+            has_prod_app  = '__PRODUCT_DETAIL_APP__' in html
+            log.info(
+                f"  🔎 HB HTML check — "
+                f"checkout-price={'✓' if has_checkout else '✗'}  "
+                f"sepete-özel={'✓' if has_sepete else '✗'}  "
+                f"data-hbus={'✓' if has_hbus else '✗'}  "
+                f"PRODUCT_APP={'✓' if has_prod_app else '✗'}  "
+                f"size={len(html):,}b"
+            )
+            if not has_checkout and not has_sepete:
+                log.warning("  ⚠ HB: price markers absent — bot-block or captcha page?")
+
         return html, js_data
 
     except PWTimeout:
@@ -1004,7 +1120,16 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
     results: List[Product] = []
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=HEADLESS)
+        browser = await pw.chromium.launch(
+            headless=HEADLESS,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-extensions",
+            ],
+        )
         log.info(f"Browser launched (headless={HEADLESS}). Scraping {len(tasks)} URL(s) …\n")
 
         for idx, (weight, url, site) in enumerate(tasks, 1):
@@ -1449,12 +1574,15 @@ async def _main(args: argparse.Namespace) -> None:
     live_22k = fetch_live_gold_price_try()
     if live_22k:
         MIN_PRICE_PER_GRAM_TRY = round(live_22k * SANITY_RATIO, 2)
+        MAX_PRICE_PER_GRAM_TRY = round(live_22k * MAX_SANITY_RATIO, 2)
         print(f"  ✓  Live 22k price  : {fmt_price(live_22k)}/g")
         print(f"  ✓  Min valid price : {fmt_price(MIN_PRICE_PER_GRAM_TRY)}/g "
               f"({SANITY_RATIO*100:.0f}% of market — products below this are skipped)")
+        print(f"  ✓  Max valid price : {fmt_price(MAX_PRICE_PER_GRAM_TRY)}/g "
+              f"({MAX_SANITY_RATIO*100:.0f}% of market — absurd prices above this are skipped)")
     else:
         print(f"  ⚠  Could not fetch live price — using fallback "
-              f"{fmt_price(MIN_PRICE_PER_GRAM_TRY)}/g")
+              f"min={fmt_price(MIN_PRICE_PER_GRAM_TRY)}/g  max={fmt_price(MAX_PRICE_PER_GRAM_TRY)}/g")
     print()
 
     products = await scrape_all(PRODUCT_URLS)
