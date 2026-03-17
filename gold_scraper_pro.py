@@ -445,6 +445,45 @@ def _h1(html: str) -> str:
     return "Unknown"
 
 
+def _name_from_url(url: str) -> str:
+    """
+    Extract a human-readable product name from the URL slug.
+    Used as a fallback when the page is bot-blocked and <h1> cannot be parsed.
+
+    Examples:
+      hepsiburada.com/ahlatci-10-gr-22-ayar-ajda-bilezik-pm-HBC000012R16E
+        → "Ahlatci 10 Gr 22 Ayar Ajda Bilezik"
+      amazon.com.tr/AgaKulche-Gram-Ayar-Ajda-Bilezik/dp/B0FBJX4LH6
+        → "Agakulche Gram Ayar Ajda Bilezik"
+      idefix.com/10-grgram-22-ayar-isciliksiz-ajda-bilezik-p-6917062
+        → "10 Grgram 22 Ayar Isciliksiz Ajda Bilezik"
+    """
+    try:
+        path = urlparse(url).path.rstrip('/')
+
+        # Amazon: text segment comes BEFORE /dp/ASIN
+        m_amz = re.search(r'/([A-Za-z0-9%_\-]+)/dp/', path)
+        if m_amz:
+            segment = m_amz.group(1)
+        else:
+            segment = path.split('/')[-1]
+            # Hepsiburada: strip -pm-HBC… suffix
+            segment = re.sub(r'-pm-[A-Z0-9]+$', '', segment)
+            # Idefix: strip -p-123456 suffix
+            segment = re.sub(r'-p-\d+$', '', segment)
+            # N11: strip trailing numeric ID
+            segment = re.sub(r'-\d{6,}$', '', segment)
+
+        # URL-decode, replace separators, title-case
+        from urllib.parse import unquote
+        segment = unquote(segment)
+        name = re.sub(r'[-_]+', ' ', segment).strip()
+        name = ' '.join(w.capitalize() for w in name.split())
+        return name if len(name) > 3 else ""
+    except Exception:
+        return ""
+
+
 # ── Hepsiburada ───────────────────────────────────────────────────────────────
 def parse_hepsiburada(html: str, url: str, weight: str,
                       js_data: Optional[dict] = None) -> Product:
@@ -1725,6 +1764,16 @@ async def _main(args: argparse.Namespace) -> None:
     if not products:
         print("No results to display.")
         return
+
+    # ── Post-process: replace "Unknown"/"N/A" names with URL slug ─────────────
+    # When a site is bot-blocked the <h1> cannot be parsed, but the URL slug
+    # always contains a readable product description.
+    for p in products:
+        if p.name in ("Unknown", "N/A", "", None):
+            slug = _name_from_url(p.url)
+            if slug:
+                p.name = slug
+                log.debug(f"  📝 Name from URL slug: {slug}")
 
     compare(products)
 
