@@ -584,9 +584,24 @@ def parse_amazon(html: str, url: str, weight: str) -> Product:
     site = "Amazon TR"
     name = _h1(html)
 
-    if _oos(html) or bool(re.search(r"currently unavailable|şu an mevcut değil", html, re.I)):
-        return Product(site=site, name=name, weight=weight, price=None,
-                       url=url, status="out_of_stock")
+    # OOS detection for Amazon — use positive signals first.
+    # "Sepete Ekle" / "add-to-cart-button" is the most reliable in-stock signal.
+    # Only fall back to text scanning if no buy button is found at all.
+    has_cart_btn = bool(re.search(
+        r'id="add-to-cart-button"|id="buy-now-button"|name="submit\.add-to-cart"'
+        r'|buyingPrice|id="buybox"',
+        html, re.I,
+    ))
+    if not has_cart_btn:
+        # No buy button → check for OOS phrases scoped to first ~15 KB
+        # (avoids picking up "mevcut değil" from recommended products section)
+        oos_scope = html[:15000]
+        if _oos(oos_scope):
+            log.debug("  Amazon: no buy-button + OOS phrase found → out_of_stock")
+            return Product(site=site, name=name, weight=weight, price=None,
+                           url=url, status="out_of_stock")
+    else:
+        log.debug("  Amazon: buy-button present → treating as in-stock")
 
     price: Optional[float] = None
 
@@ -1007,20 +1022,34 @@ async def fetch_page_pw(browser: Browser, url: str) -> Tuple[Optional[str], Opti
             )
             await asyncio.sleep(random.uniform(0.2, 0.5))
 
-            # Step 2: wait for any price element to appear
+            # Step 2: wait until actual price DATA is available in the DOM/JS bundle
+            # wait_for_function is more reliable than wait_for_selector because it
+            # checks that __PRODUCT_DETAIL_APP__ has real listing data, not just
+            # that a DOM element exists (which can happen on bot-challenge pages too).
             try:
-                await page.wait_for_selector(
-                    '[data-test-id="checkout-price"], [data-test-id="price"], '
-                    '[data-bind*="displayedPriceValue"], [class*="price-value"], '
-                    '[class*="currentPrice"], [itemprop="price"]',
-                    timeout=18_000,
+                await page.wait_for_function(
+                    """() => {
+                        // Option A: checkout-price element has visible text
+                        var cp = document.querySelector('[data-test-id="checkout-price"]');
+                        if (cp && cp.innerText && cp.innerText.trim().length > 3) return true;
+                        // Option B: price element has visible text
+                        var pp = document.querySelector('[data-test-id="price"]');
+                        if (pp && pp.innerText && pp.innerText.trim().length > 3) return true;
+                        // Option C: JS bundle has listing price data
+                        var d = window.__PRODUCT_DETAIL_APP__;
+                        if (d && d.product && d.product.listings &&
+                            d.product.listings[0] && d.product.listings[0].priceInfo) return true;
+                        return false;
+                    }""",
+                    timeout=22_000,
                 )
+                log.info("  ✓ HB: price data confirmed in DOM/JS")
             except PWTimeout:
-                log.warning("  ⚠ HB: price selector timeout — proceeding anyway")
+                log.warning("  ⚠ HB: wait_for_function timeout — may be bot-blocked")
 
-            # Step 3: wait for JS bundle to finish loading
+            # Step 3: brief additional settle time for React/Knockout hydration
             try:
-                await page.wait_for_load_state("networkidle", timeout=15_000)
+                await page.wait_for_load_state("networkidle", timeout=10_000)
             except PWTimeout:
                 pass
 
@@ -1407,6 +1436,16 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                 <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
                 <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
                 <td>🚫 Stokta Yok</td>
+              </tr>"""
+
+        for p in err_items:
+            label = "❓ Fiyat Alınamadı" if p.status == "price_not_found" else "⚠️ Hata"
+            rows_html += f"""
+              <tr class="table-warning text-muted">
+                <td>{p.site}</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
+                <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
+                <td>{label}</td>
               </tr>"""
 
         if best:
