@@ -1565,24 +1565,8 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                 <td>{note}</td>
               </tr>"""
 
-        for p in oos_items:
-            rows_html += f"""
-              <tr class="table-secondary text-muted">
-                <td>{p.site}</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
-                <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
-                <td>🚫 Stokta Yok</td>
-              </tr>"""
-
-        for p in err_items:
-            label = "❓ Fiyat Alınamadı" if p.status == "price_not_found" else "⚠️ Hata"
-            rows_html += f"""
-              <tr class="table-warning text-muted">
-                <td>{p.site}</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
-                <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
-                <td>{label}</td>
-              </tr>"""
+        # Stokta olmayan ve fiyat alınamayan ürünler HTML'de gösterilmiyor.
+        # Sadece gerçekten satın alınabilir (ok) ürünler tabloda yer alır.
 
         if best:
             savings = ""
