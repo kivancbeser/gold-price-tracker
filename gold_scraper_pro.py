@@ -1552,7 +1552,7 @@ def preflight() -> bool:
 
 
 async def _main(args: argparse.Namespace) -> None:
-    global MIN_PRICE_PER_GRAM_TRY
+    global MIN_PRICE_PER_GRAM_TRY, MAX_PRICE_PER_GRAM_TRY
 
     total = sum(len(v) for v in PRODUCT_URLS.values())
     print()
