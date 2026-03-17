@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  22 Ayar Gold Bracelet Price Scraper — Python dependencies
+#
+#  Install all at once:
+#      pip install -r requirements.txt
+#
+#  Then install the Playwright browser engine (one-time, ~200 MB):
+#      playwright install chromium
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core scraping engine ──────────────────────────────────────────────────────
+playwright>=1.44.0          # Headless Chromium automation (anti-bot resilient)
+
+# ── HTML parsing (used by the basic requests-based v1 scraper) ────────────────
+requests>=2.31.0            # HTTP client
+beautifulsoup4>=4.12.0      # HTML parser
+lxml>=5.0.0                 # Fast XML/HTML parser backend for BeautifulSoup
+
+# ── Output formatting ─────────────────────────────────────────────────────────
+tabulate>=0.9.0             # Pretty terminal tables
+colorama>=0.4.6             # Coloured terminal output (cross-platform)
