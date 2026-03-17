@@ -5,6 +5,10 @@ on:
     # Her gün saat 09:00 Istanbul (UTC+3 = UTC 06:00)
     - cron: '0 6 * * *'
   workflow_dispatch:   # Manuel tetikleme butonu (GitHub'dan istediğinde çalıştır)
+  push:
+    branches: [main]
+    paths:
+      - 'gold_scraper_pro.py'   # Sadece scraper değişince çalış, yml değişince değil
 
 jobs:
   scrape:

@@ -380,176 +380,6 @@ def fetch_hb_html_requests(url: str) -> Optional[str]:
         return None
 
 
-def fetch_amazon_requests(url: str) -> Optional[str]:
-    """
-    Fetch an Amazon TR product page via plain HTTP requests (no Playwright).
-    Amazon sometimes serves a lighter page to non-JS clients that still contains
-    price data in a-offscreen spans or JSON-LD.
-    Returns the HTML string, or None on failure.
-    """
-    if not REQUESTS_OK:
-        return None
-    try:
-        # Extract ASIN from URL for a clean dp URL
-        m_asin = re.search(r'/dp/([A-Z0-9]{10})', url)
-        clean_url = f"https://www.amazon.com.tr/dp/{m_asin.group(1)}" if m_asin else url
-
-        headers = {
-            "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept":        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT":           "1",
-            "Connection":    "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-        }
-        r = _requests.get(clean_url, headers=headers, timeout=20, allow_redirects=True)
-        r.raise_for_status()
-        html = r.text
-        is_captcha  = bool(re.search(r'robot_check|Type the characters|captcha', html, re.I))
-        has_offscr  = 'a-offscreen' in html
-        has_buybox  = 'id="buybox"' in html or 'id="add-to-cart-button"' in html
-        log.info(f"  📡 Amazon requests — "
-                 f"captcha={'⚠' if is_captcha else '✗'}  "
-                 f"buybox={'✓' if has_buybox else '✗'}  "
-                 f"a-offscreen={'✓' if has_offscr else '✗'}  "
-                 f"size={len(html):,}b")
-        return html
-    except Exception as e:
-        log.debug(f"  Amazon requests fallback failed: {e}")
-        return None
-
-
-def _deep_find_price(obj, weight: str, depth: int = 0) -> Optional[float]:
-    """
-    Recursively walk any JSON structure to find a sane price value.
-    Tries keys like price, listPrice, salePrice, discountedPrice, cartPrice, amount.
-    Returns the first value that passes sanity_check.
-    """
-    if depth > 8:
-        return None
-    price_keys = {
-        "price", "listprice", "saleprice", "discountedprice", "cartprice",
-        "amount", "sellingprice", "displayprice", "formattedprice",
-        "currentprice", "newprice",
-    }
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            kl = k.lower()
-            if kl in price_keys and v is not None:
-                val = parse_try_price(str(v))
-                checked = sanity_check(val, weight)
-                if checked:
-                    return checked
-        for v in obj.values():
-            if isinstance(v, (dict, list)):
-                found = _deep_find_price(v, weight, depth + 1)
-                if found:
-                    return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _deep_find_price(item, weight, depth + 1)
-            if found:
-                return found
-    return None
-
-
-def _deep_find_seller(obj, depth: int = 0) -> str:
-    """Recursively find a merchant/seller name in JSON."""
-    if depth > 8:
-        return ""
-    seller_keys = {
-        "merchantname", "sellername", "merchant_name", "seller_name",
-        "sellerdisplayname", "merchantdisplayname", "brandname",
-        "merchantseoname",
-    }
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k.lower() in seller_keys and isinstance(v, str) and 2 <= len(v) <= 80:
-                return v.strip()
-        for v in obj.values():
-            if isinstance(v, (dict, list)):
-                found = _deep_find_seller(v, depth + 1)
-                if found:
-                    return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _deep_find_seller(item, depth + 1)
-            if found:
-                return found
-    return ""
-
-
-def fetch_hb_api_price(url: str, weight: str) -> Tuple[Optional[float], str]:
-    """
-    Try Hepsiburada's internal JSON APIs to get price + seller WITHOUT Playwright.
-    HB serves JSON from several undocumented API endpoints that are far less
-    aggressively rate-limited than the product page itself.
-
-    Extracts the product SKU from the URL (suffix after -pm-) and queries:
-      1. /product-service/api/products?ids={sku}           (product catalogue)
-      2. /listing/api/listing?q=&productIds={sku}&take=1   (listing service)
-
-    Returns (price, seller_name).  price=None on failure.
-    """
-    if not REQUESTS_OK:
-        return None, ""
-
-    m = re.search(r'-pm-([A-Z0-9]+)(?:/.*)?$', url)
-    if not m:
-        log.debug("  HB API: cannot extract SKU from URL")
-        return None, ""
-
-    sku = m.group(1)
-    log.info(f"  🔑 HB product SKU: {sku}")
-
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept":          "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer":         url,
-        "Origin":          "https://www.hepsiburada.com",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-    endpoints = [
-        f"https://www.hepsiburada.com/product-service/api/products?ids={sku}",
-        f"https://www.hepsiburada.com/listing/api/listing?q=&productIds={sku}&take=1&channel=web",
-        f"https://www.hepsiburada.com/product-service/api/products/sku/{sku}",
-        f"https://www.hepsiburada.com/product-service/api/products/{sku}",
-    ]
-
-    for ep in endpoints:
-        try:
-            r = _requests.get(ep, headers=headers, timeout=12, allow_redirects=True)
-            log.info(f"  HB API [{r.status_code}] {ep[:80]}")
-            if r.status_code != 200:
-                continue
-            try:
-                data = r.json()
-            except ValueError:
-                # Not JSON — might be HTML bot-challenge
-                log.debug(f"  HB API: non-JSON response from {ep}")
-                continue
-
-            price  = _deep_find_price(data, weight)
-            seller = _deep_find_seller(data)
-
-            if price:
-                log.info(f"  ✅ HB API price: {price:,.2f} TRY  seller: {seller or '(unknown)'}")
-                return price, seller
-
-            log.debug(f"  HB API {ep[:60]}: no sane price found in JSON")
-        except Exception as exc:
-            log.debug(f"  HB API {ep[:60]} error: {exc}")
-
-    log.warning("  ⚠ HB API: all endpoints failed to return a price")
-    return None, ""
-
-
 def fetch_live_gold_price_try() -> Optional[float]:
     """
     Fetch today's live gram-gold price (24-ayar) from bigpara.hurriyet.com.tr
@@ -871,59 +701,6 @@ def parse_amazon(html: str, url: str, weight: str) -> Product:
                 price = candidate
                 log.debug(f"  Amazon: price from a-offscreen: {price}")
                 break
-
-    # ── Strategy 6: swatchPrice / twister JSON data ────────────────────────────
-    # Amazon embeds selected variation price in a JSON blob
-    if not price:
-        for mm in re.finditer(
-            r'"displayPrice"\s*:\s*"[₺TL]?\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)"',
-            html, re.I,
-        ):
-            candidate = sanity_check(parse_try_price(mm.group(1)), weight)
-            if candidate:
-                price = candidate
-                log.debug(f"  Amazon: price from displayPrice JSON: {price}")
-                break
-
-    # ── Strategy 7: priceValue / basisPrice in data-a-* attributes ────────────
-    if not price:
-        for pat7 in [
-            r'data-a-color="price"[^>]*>\s*<[^>]+class="[^"]*a-offscreen[^"]*"[^>]*>\s*[₺TL]?\s*([\d.,]+)',
-            r'"priceValue"\s*:\s*["\']?([\d.,]+)',
-            r'data-csa-c-item-price="([^"]+)"',
-        ]:
-            mm = re.search(pat7, html, re.I)
-            if mm:
-                candidate = sanity_check(parse_try_price(mm.group(1)), weight)
-                if candidate:
-                    price = candidate
-                    log.debug(f"  Amazon: price from strategy-7: {price}")
-                    break
-
-    # ── Diagnostic: log what was / wasn't found in the page ───────────────────
-    is_captcha  = bool(re.search(r'robot_check|Type the characters|captcha', html, re.I))
-    has_buybox  = 'id="buybox"' in html or 'id="add-to-cart-button"' in html
-    has_offscr  = 'a-offscreen' in html
-    has_core    = 'corePriceDisplay' in html
-    log.info(
-        f"  🔎 Amazon HTML — captcha={'⚠' if is_captcha else '✗'}  "
-        f"buybox={'✓' if has_buybox else '✗'}  "
-        f"a-offscreen={'✓' if has_offscr else '✗'}  "
-        f"corePrice={'✓' if has_core else '✗'}  "
-        f"size={len(html):,}b  price={'✓ ' + str(round(price)) if price else '✗ NOT FOUND'}"
-    )
-
-    # ── Debug HTML dump (env-controlled) ──────────────────────────────────────
-    if price is None and os.environ.get("GOLD_DEBUG_HTML"):
-        try:
-            import hashlib, textwrap
-            slug = hashlib.md5(url.encode()).hexdigest()[:8]
-            dbg_path = f"debug_amazon_{slug}.html"
-            with open(dbg_path, "w", encoding="utf-8") as fh:
-                fh.write(html)
-            log.info(f"  💾 Debug HTML saved → {dbg_path}")
-        except Exception:
-            pass
 
     # ── Seller / merchant name ─────────────────────────────────────────────────
     seller = _extract_seller_html(html, [
@@ -1465,51 +1242,20 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                     product = Product(site=site, name="N/A", weight=weight, price=None,
                                       url=url, status="error", error_msg=str(exc))
 
-            # ── HB fallback cascade: API JSON → requests HTML ─────────────────
+            # ── HB fallback: if Playwright got bot-blocked, try requests ──────
             if (product.status in ("price_not_found", "error")
                     and "hepsiburada.com" in urlparse(url).netloc.lower()):
-
-                # Fallback 1: internal JSON API (fastest, least bot-detected)
-                log.info("  🔄 HB: trying internal JSON API fallback…")
-                api_price, api_seller = fetch_hb_api_price(url, weight)
-                if api_price:
-                    # Build a Product from the API result; keep name from Playwright if available
-                    prev_name   = product.name if product.name not in ("N/A", "Unknown") else "Hepsiburada"
-                    prev_seller = api_seller or product.seller or ""
-                    product = Product(
-                        site=site, name=prev_name, weight=weight,
-                        price=api_price, url=url, seller=prev_seller,
-                    )
-                    log.info(f"  ✓ HB API fallback OK: {fmt_price(product.price)}")
-
-                # Fallback 2: plain HTTP request for the HTML page
-                if product.status in ("price_not_found", "error"):
-                    log.info("  🔄 HB: trying requests HTML fallback…")
-                    html_fb = fetch_hb_html_requests(url)
-                    if html_fb:
-                        try:
-                            product = parse_hepsiburada(html_fb, url, weight, js_data={})
-                            if product.status == "ok":
-                                log.info(f"  ✓ HB requests fallback OK: {fmt_price(product.price)}")
-                            else:
-                                log.warning("  ⚠ HB requests fallback: price still not found")
-                        except Exception as exc:
-                            log.debug(f"  HB requests fallback parse error: {exc}")
-
-            # ── Amazon fallback: requests HTML if Playwright got bot-blocked ──
-            if (product.status in ("price_not_found", "error")
-                    and "amazon.com.tr" in urlparse(url).netloc.lower()):
-                log.info("  🔄 Amazon: Playwright failed → trying requests fallback…")
-                html_az = fetch_amazon_requests(url)
-                if html_az:
+                log.info("  🔄 HB Playwright failed → trying requests fallback…")
+                html_fb = fetch_hb_html_requests(url)
+                if html_fb:
                     try:
-                        product = parse_amazon(html_az, url, weight)
+                        product = parse_hepsiburada(html_fb, url, weight, js_data={})
                         if product.status == "ok":
-                            log.info(f"  ✓ Amazon requests fallback OK: {fmt_price(product.price)}")
+                            log.info(f"  ✓ HB requests fallback OK: {fmt_price(product.price)}")
                         else:
-                            log.warning("  ⚠ Amazon requests fallback: price still not found")
+                            log.warning("  ⚠ HB requests fallback: price still not found")
                     except Exception as exc:
-                        log.debug(f"  Amazon requests fallback parse error: {exc}")
+                        log.debug(f"  HB requests fallback parse error: {exc}")
 
             if product.status == "ok":
                 log.info(f"  ✓ {fmt_price(product.price)}  ({fmt_price(product.price_pgr)}/g)")
@@ -1753,8 +1499,24 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                 <td>{note}</td>
               </tr>"""
 
-        # OOS and error items are intentionally not shown in HTML —
-        # only in-stock products with confirmed prices are displayed.
+        for p in oos_items:
+            rows_html += f"""
+              <tr class="table-secondary text-muted">
+                <td>{p.site}</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
+                <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
+                <td>🚫 Stokta Yok</td>
+              </tr>"""
+
+        for p in err_items:
+            label = "❓ Fiyat Alınamadı" if p.status == "price_not_found" else "⚠️ Hata"
+            rows_html += f"""
+              <tr class="table-warning text-muted">
+                <td>{p.site}</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
+                <td>—</td><td class="text-end">—</td><td class="text-end">—</td>
+                <td>{label}</td>
+              </tr>"""
 
         if best:
             savings = ""
