@@ -36,6 +36,15 @@ try:
 except ImportError:
     REQUESTS_OK = False
 
+# curl_cffi: impersonates Chrome's TLS fingerprint (JA3/JA4 + HTTP/2 settings).
+# This bypasses bot detection systems that fingerprint the TLS ClientHello.
+# Much harder to detect than standard requests/httpx from datacenter IPs.
+try:
+    from curl_cffi import requests as _curl_requests
+    CURL_CFFI_OK = True
+except ImportError:
+    CURL_CFFI_OK = False
+
 # ── Optional pretty-print libs (graceful fallback) ────────────────────────────
 try:
     from tabulate import tabulate
@@ -343,42 +352,249 @@ def _meta_price(html: str) -> Optional[float]:
 def fetch_hb_html_requests(url: str) -> Optional[str]:
     """
     Fetch a Hepsiburada page using the requests library instead of Playwright.
-    Headless Chrome triggers HB's bot detection; a plain HTTP request with a
-    realistic browser User-Agent often bypasses it.
+    Headless Chrome triggers HB's bot detection.
+    Tries curl_cffi (Chrome TLS impersonation) first, then plain requests.
     Returns the HTML string, or None on failure.
     """
-    if not REQUESTS_OK:
+    if not REQUESTS_OK and not CURL_CFFI_OK:
         return None
-    try:
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": ("text/html,application/xhtml+xml,application/xml;"
-                       "q=0.9,image/avif,image/webp,*/*;q=0.8"),
-            "Accept-Language":           "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding":           "gzip, deflate, br",
-            "DNT":                       "1",
-            "Connection":                "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest":            "document",
-            "Sec-Fetch-Mode":            "navigate",
-            "Sec-Fetch-Site":            "none",
-            "Sec-Ch-Ua":                 '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            "Sec-Ch-Ua-Mobile":          "?0",
-            "Sec-Ch-Ua-Platform":        '"Windows"',
-        }
-        r = _requests.get(url, headers=headers, timeout=20, allow_redirects=True)
-        r.raise_for_status()
-        html = r.text
-        has_app = "__PRODUCT_DETAIL_APP__" in html
-        has_price = bool(re.search(r'data-test-id="(checkout-price|price)"', html))
-        log.info(f"  📡 HB requests fallback — "
-                 f"PRODUCT_APP={'✓' if has_app else '✗'}  "
-                 f"price-element={'✓' if has_price else '✗'}  "
+
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": ("text/html,application/xhtml+xml,application/xml;"
+                   "q=0.9,image/avif,image/webp,*/*;q=0.8"),
+        "Accept-Language":           "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "DNT":                       "1",
+        "Connection":                "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest":            "document",
+        "Sec-Fetch-Mode":            "navigate",
+        "Sec-Fetch-Site":            "none",
+        "Sec-Ch-Ua":                 '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile":          "?0",
+        "Sec-Ch-Ua-Platform":        '"Windows"',
+    }
+
+    # ── Attempt 1: curl_cffi with Chrome TLS impersonation ────────────────────
+    if CURL_CFFI_OK:
+        try:
+            r = _curl_requests.get(
+                url, headers=headers, timeout=20,
+                impersonate="chrome124",   # exact Chrome 124 TLS fingerprint
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            html = r.text
+            has_app   = "__PRODUCT_DETAIL_APP__" in html
+            has_price = bool(re.search(r'data-test-id="(checkout-price|price)"', html))
+            log.info(f"  📡 HB curl_cffi — "
+                     f"PRODUCT_APP={'✓' if has_app else '✗'}  "
+                     f"price-element={'✓' if has_price else '✗'}  "
+                     f"size={len(html):,}b")
+            return html
+        except Exception as e:
+            log.debug(f"  HB curl_cffi failed: {e}")
+
+    # ── Attempt 2: plain requests fallback ────────────────────────────────────
+    if REQUESTS_OK:
+        try:
+            r = _requests.get(url, headers=headers, timeout=20, allow_redirects=True)
+            r.raise_for_status()
+            html = r.text
+            has_app   = "__PRODUCT_DETAIL_APP__" in html
+            has_price = bool(re.search(r'data-test-id="(checkout-price|price)"', html))
+            log.info(f"  📡 HB requests — "
+                     f"PRODUCT_APP={'✓' if has_app else '✗'}  "
+                     f"price-element={'✓' if has_price else '✗'}  "
+                     f"size={len(html):,}b")
+            return html
+        except Exception as e:
+            log.debug(f"  HB requests failed: {e}")
+
+    return None
+
+
+def fetch_amazon_requests(url: str) -> Optional[str]:
+    """
+    Fetch an Amazon TR product page via HTTP (no Playwright).
+    Tries curl_cffi with Chrome TLS impersonation first, then plain requests.
+    Returns the HTML string, or None on failure.
+    """
+    if not REQUESTS_OK and not CURL_CFFI_OK:
+        return None
+
+    # Use clean /dp/ASIN URL to avoid redirect chains
+    m_asin = re.search(r'/dp/([A-Z0-9]{10})', url)
+    clean_url = f"https://www.amazon.com.tr/dp/{m_asin.group(1)}" if m_asin else url
+
+    headers = {
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "DNT":             "1",
+        "Connection":      "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control":   "max-age=0",
+        "Sec-Ch-Ua":       '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+    }
+
+    def _log_amz(html: str, method: str) -> None:
+        is_captcha = bool(re.search(r'robot_check|Type the characters|captcha', html, re.I))
+        has_buybox = 'id="buybox"' in html or 'id="add-to-cart-button"' in html
+        has_offscr = 'a-offscreen' in html
+        log.info(f"  📡 Amazon {method} — "
+                 f"captcha={'⚠' if is_captcha else '✗'}  "
+                 f"buybox={'✓' if has_buybox else '✗'}  "
+                 f"a-offscreen={'✓' if has_offscr else '✗'}  "
                  f"size={len(html):,}b")
-        return html
-    except Exception as e:
-        log.debug(f"  HB requests fallback failed: {e}")
+
+    # ── Attempt 1: curl_cffi Chrome impersonation ──────────────────────────────
+    if CURL_CFFI_OK:
+        try:
+            r = _curl_requests.get(
+                clean_url, headers=headers, timeout=20,
+                impersonate="chrome124",
+                allow_redirects=True,
+            )
+            r.raise_for_status()
+            _log_amz(r.text, "curl_cffi")
+            return r.text
+        except Exception as e:
+            log.debug(f"  Amazon curl_cffi failed: {e}")
+
+    # ── Attempt 2: plain requests ──────────────────────────────────────────────
+    if REQUESTS_OK:
+        try:
+            r = _requests.get(clean_url, headers=headers, timeout=20, allow_redirects=True)
+            r.raise_for_status()
+            _log_amz(r.text, "requests")
+            return r.text
+        except Exception as e:
+            log.debug(f"  Amazon requests failed: {e}")
+
+    return None
+
+
+def _deep_find_price(obj, weight: str, depth: int = 0) -> Optional[float]:
+    """Recursively search any JSON structure for a sane price value."""
+    if depth > 8:
         return None
+    price_keys = {
+        "price", "listprice", "saleprice", "discountedprice", "cartprice",
+        "amount", "sellingprice", "displayprice", "currentprice", "newprice",
+    }
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.lower() in price_keys and v is not None:
+                val = parse_try_price(str(v))
+                checked = sanity_check(val, weight)
+                if checked:
+                    return checked
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                found = _deep_find_price(v, weight, depth + 1)
+                if found:
+                    return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _deep_find_price(item, weight, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _deep_find_seller(obj, depth: int = 0) -> str:
+    """Recursively find a merchant/seller name in JSON."""
+    if depth > 8:
+        return ""
+    seller_keys = {
+        "merchantname", "sellername", "merchant_name", "seller_name",
+        "sellerdisplayname", "merchantdisplayname", "merchantseoname",
+    }
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k.lower() in seller_keys and isinstance(v, str) and 2 <= len(v) <= 80:
+                return v.strip()
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                found = _deep_find_seller(v, depth + 1)
+                if found:
+                    return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _deep_find_seller(item, depth + 1)
+            if found:
+                return found
+    return ""
+
+
+def fetch_hb_api_price(url: str, weight: str) -> Tuple[Optional[float], str]:
+    """
+    Query Hepsiburada's internal JSON APIs directly — no HTML rendering needed.
+    Extracts product SKU from URL, tries multiple API endpoints.
+    Returns (price, seller_name).
+    """
+    if not REQUESTS_OK and not CURL_CFFI_OK:
+        return None, ""
+
+    m = re.search(r'-pm-([A-Z0-9]+)(?:/.*)?$', url)
+    if not m:
+        return None, ""
+    sku = m.group(1)
+    log.info(f"  🔑 HB SKU: {sku}")
+
+    headers = {
+        "User-Agent":       random.choice(USER_AGENTS),
+        "Accept":           "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language":  "tr-TR,tr;q=0.9",
+        "Referer":          url,
+        "Origin":           "https://www.hepsiburada.com",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    endpoints = [
+        f"https://www.hepsiburada.com/product-service/api/products?ids={sku}",
+        f"https://www.hepsiburada.com/listing/api/listing?q=&productIds={sku}&take=1&channel=web",
+        f"https://www.hepsiburada.com/product-service/api/products/sku/{sku}",
+    ]
+
+    def _do_get(ep):
+        if CURL_CFFI_OK:
+            try:
+                r = _curl_requests.get(ep, headers=headers, timeout=12,
+                                       impersonate="chrome124", allow_redirects=True)
+                if r.status_code == 200:
+                    return r
+            except Exception:
+                pass
+        if REQUESTS_OK:
+            try:
+                r = _requests.get(ep, headers=headers, timeout=12, allow_redirects=True)
+                if r.status_code == 200:
+                    return r
+            except Exception:
+                pass
+        return None
+
+    for ep in endpoints:
+        r = _do_get(ep)
+        if not r:
+            log.debug(f"  HB API no response: {ep[:70]}")
+            continue
+        try:
+            data = r.json()
+        except ValueError:
+            log.debug(f"  HB API non-JSON from {ep[:70]}")
+            continue
+        price  = _deep_find_price(data, weight)
+        seller = _deep_find_seller(data)
+        log.info(f"  HB API {ep[:60]}: price={price} seller={seller or '-'}")
+        if price:
+            return price, seller
+
+    return None, ""
 
 
 def fetch_live_gold_price_try() -> Optional[float]:
@@ -1308,20 +1524,63 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                     product = Product(site=site, name="N/A", weight=weight, price=None,
                                       url=url, status="error", error_msg=str(exc))
 
-            # ── HB fallback: if Playwright got bot-blocked, try requests ──────
-            if (product.status in ("price_not_found", "error")
-                    and "hepsiburada.com" in urlparse(url).netloc.lower()):
-                log.info("  🔄 HB Playwright failed → trying requests fallback…")
-                html_fb = fetch_hb_html_requests(url)
-                if html_fb:
+            domain = urlparse(url).netloc.lower()
+
+            # ── HB fallback cascade: API JSON → curl_cffi/requests HTML ──────
+            if product.status in ("price_not_found", "error") and "hepsiburada.com" in domain:
+
+                # Fallback 1: internal JSON API (no HTML rendering needed)
+                log.info("  🔄 HB: trying internal JSON API…")
+                api_price, api_seller = fetch_hb_api_price(url, weight)
+                if api_price:
+                    prev_name = product.name if product.name not in ("N/A", "Unknown") else ""
+                    product = Product(
+                        site=site, name=prev_name or "Hepsiburada",
+                        weight=weight, price=api_price,
+                        url=url, seller=api_seller or product.seller or "",
+                    )
+                    log.info(f"  ✓ HB API OK: {fmt_price(product.price)}")
+
+                # Fallback 2: curl_cffi / requests HTML fetch
+                if product.status in ("price_not_found", "error"):
+                    log.info("  🔄 HB: trying curl_cffi/requests HTML…")
+                    html_fb = fetch_hb_html_requests(url)
+                    if html_fb:
+                        try:
+                            product = parse_hepsiburada(html_fb, url, weight, js_data={})
+                            if product.status == "ok":
+                                log.info(f"  ✓ HB HTML fallback OK: {fmt_price(product.price)}")
+                            else:
+                                log.warning("  ⚠ HB HTML fallback: price still not found")
+                        except Exception as exc:
+                            log.debug(f"  HB HTML fallback parse error: {exc}")
+
+            # ── Amazon fallback: curl_cffi/requests if Playwright bot-blocked ─
+            if product.status in ("price_not_found", "error") and "amazon.com.tr" in domain:
+                log.info("  🔄 Amazon: trying curl_cffi/requests HTML…")
+                html_az = fetch_amazon_requests(url)
+                if html_az:
                     try:
-                        product = parse_hepsiburada(html_fb, url, weight, js_data={})
+                        product = parse_amazon(html_az, url, weight)
                         if product.status == "ok":
-                            log.info(f"  ✓ HB requests fallback OK: {fmt_price(product.price)}")
+                            log.info(f"  ✓ Amazon HTML fallback OK: {fmt_price(product.price)}")
                         else:
-                            log.warning("  ⚠ HB requests fallback: price still not found")
+                            log.warning("  ⚠ Amazon HTML fallback: price still not found")
                     except Exception as exc:
-                        log.debug(f"  HB requests fallback parse error: {exc}")
+                        log.debug(f"  Amazon HTML fallback parse error: {exc}")
+
+            # ── Debug HTML dump ────────────────────────────────────────────────
+            if product.status in ("price_not_found", "error") and os.environ.get("GOLD_DEBUG_HTML"):
+                try:
+                    import hashlib
+                    slug = hashlib.md5(url.encode()).hexdigest()[:8]
+                    dbg = f"debug_{site.replace(' ','_')}_{weight}_{slug}.html"
+                    if html:
+                        with open(dbg, "w", encoding="utf-8") as fh:
+                            fh.write(html)
+                        log.info(f"  💾 Debug HTML → {dbg}")
+                except Exception:
+                    pass
 
             if product.status == "ok":
                 log.info(f"  ✓ {fmt_price(product.price)}  ({fmt_price(product.price_pgr)}/g)")

@@ -12,7 +12,8 @@
 playwright>=1.44.0          # Headless Chromium automation (anti-bot resilient)
 
 # ── HTML parsing (used by the basic requests-based v1 scraper) ────────────────
-requests>=2.31.0            # HTTP client
+curl_cffi>=0.7.0            # Chrome TLS fingerprint impersonation (bypasses bot detection)
+requests>=2.31.0            # HTTP client (fallback)
 beautifulsoup4>=4.12.0      # HTML parser
 lxml>=5.0.0                 # Fast XML/HTML parser backend for BeautifulSoup
 

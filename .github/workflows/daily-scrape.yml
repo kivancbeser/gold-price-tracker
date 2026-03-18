@@ -57,8 +57,18 @@ jobs:
         run: python gold_scraper_pro.py --html
         env:
           PYTHONUNBUFFERED: "1"
+          GOLD_DEBUG_HTML: "1"   # Bot-blocked sayfalarin HTML'ini kaydet
 
-      # ── 8. Sonuçları commit et ve push'la ─────────────────────────────────
+      # ── 8. Debug HTML'leri artifact olarak yükle (sorun giderme) ──────────
+      - name: Upload debug HTML artifacts
+        if: always()   # Scraper başarısız olsa da çalıştır
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-html-${{ github.run_number }}
+          path: debug_*.html
+          if-no-files-found: ignore   # Hiç debug dosyası yoksa hata verme
+
+      # ── 9. Sonuçları commit et ve push'la ─────────────────────────────────
       - name: Commit & push HTML output
         run: |
           git config user.name  "github-actions[bot]"
