@@ -115,8 +115,8 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         {"url": "https://www.hepsiburada.com/ahlatci-10-gr-22-ayar-ajda-bilezik-pm-HBC000012R16E",         "site": "Hepsiburada"},
         {"url": "https://www.hepsiburada.com/ahlatci-10-gr-22-ayar-sarnelli-bilezik-pm-HBC000012R16Q",     "site": "Hepsiburada"},
         # Amazon TR
-        {"url": "https://www.amazon.com.tr/AgaKulche-Gram-Ayar-Ajda-Bilezik/dp/B0F1YWKCQF",               "site": "Amazon TR"},
-        {"url": "https://www.amazon.com.tr/i%C5%9F%C3%A7iliksiz-Parlak-Bilezik-Ziynet-Gold/dp/B0CV7GXRRL","site": "Amazon TR"},
+        {"url": "https://www.amazon.com.tr/AgaKulche-Ajda-Kibrit-%C3%87%C3%B6p%C3%BC-Bilezik/dp/B0F1YY311N",  "site": "Amazon TR"},
+        {"url": "https://www.amazon.com.tr/Parlak-Bilezik-Ziynet-Gold-ZG2236/dp/B0F3WYRB1V",                  "site": "Amazon TR"},
         # N11
         {"url": "https://www.n11.com/urun/agakulche-10-gram-22-ayar-ajda-altin-bilezik-53891989",          "site": "N11"},
         {"url": "https://www.n11.com/urun/10-gr-gram-22-ayar-ajda-bilezik-aajd10-54988148",                "site": "N11"},
@@ -132,8 +132,7 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         {"url": "https://www.hepsiburada.com/22-ayar-15-gr-ajda-bilezik-bzk164-pm-HBC00005OWRPA",          "site": "Hepsiburada"},
         {"url": "https://www.hepsiburada.com/ahlatci-15-gr-22-ayar-sarnelli-bilezik-pm-HBC000012R173",     "site": "Hepsiburada"},
         # Amazon TR
-        {"url": "https://www.amazon.com.tr/i%C5%9F%C3%A7iliksiz-Bilezik-Ziynet-Gold-ZG2038/dp/B0CV7GKKK2","site": "Amazon TR"},
-        {"url": "https://www.amazon.com.tr/Z%C3%9CMR%C3%9CT-SARRAF-Yat%C4%B1r%C4%B1ml%C4%B1k-Bilezik-VRTBlz0024/dp/B0DJVB36TZ", "site": "Amazon TR"},
+        {"url": "https://www.amazon.com.tr/i%C5%9F%C3%A7iliksiz-Bilezik-Ziynet-Gold-ZG2040/dp/B0CV7T68WJ",   "site": "Amazon TR"},
         # N11
         {"url": "https://www.n11.com/urun/22-ayar-mujde-ajda-bilezik-15-gr-110696727",                     "site": "N11"},
         {"url": "https://www.n11.com/urun/22-ayar-altin-15-gram-ajda-bilezik-85773768",                    "site": "N11"},
@@ -148,7 +147,7 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         {"url": "https://www.hepsiburada.com/ahlatci-20-gr-3-lu-burma-22-ayar-bilezik-pm-HBC000012R15R",   "site": "Hepsiburada"},
         {"url": "https://www.hepsiburada.com/22-ayar-sarnel-20-gr-bilezik-blk1307-pm-HBC000014EVNU",       "site": "Hepsiburada"},
         # Amazon TR
-        {"url": "https://www.amazon.com.tr/AgaKulche-Kanal-Alt%C4%B1n-Bilezik-Renkli/dp/B0F1YV3R3F",      "site": "Amazon TR"},
+        {"url": "https://www.amazon.com.tr/AgaKulche-Gram-Ayar-Ajda-Bilezik/dp/B0FBJVPB26",               "site": "Amazon TR"},
         # N11
         {"url": "https://urun.n11.com/22-ayar-bilezik/22-ayar-isciliksiz-simli-bilezik-20-gr-P464377122",  "site": "N11"},
         {"url": "https://urun.n11.com/22-ayar-bilezik/20-grgram-18-mm-22-ayar-isciliksiz-bilezik-tbc0020-2-P498601063", "site": "N11"},
@@ -348,6 +347,58 @@ def _meta_price(html: str) -> Optional[float]:
 # ══════════════════════════════════════════════════════════════════════════════
 #  SITE-SPECIFIC PARSERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+def fetch_via_scraperapi(url: str) -> Optional[str]:
+    """
+    Fetch a URL through ScraperAPI with JavaScript rendering enabled.
+
+    Uses render=true so ScraperAPI executes a real browser on their side,
+    runs JavaScript (React/Knockout), and returns the fully rendered HTML.
+    This is essential for Hepsiburada which loads prices via JS.
+
+    Cost: 5 API credits per request (vs 1 for plain proxy).
+    Free tier: 5000 credits/month — 8 HB URLs × ~20 days = 800 credits, well within limit.
+
+    Requires SCRAPERAPI_KEY environment variable / GitHub Secret.
+    Sign up (no CC required): https://www.scraperapi.com/
+    """
+    from urllib.parse import quote_plus
+    api_key = os.environ.get("SCRAPERAPI_KEY", "").strip()
+    if not api_key or not REQUESTS_OK:
+        return None
+    try:
+        # Use ScraperAPI's rendering endpoint — runs a real Chromium browser on their infra
+        api_url = (
+            f"https://api.scraperapi.com/"
+            f"?api_key={api_key}"
+            f"&url={quote_plus(url)}"
+            f"&render=true"
+            f"&country_code=tr"   # Turkish residential IP → HB serves TR content
+        )
+        log.info(f"  🌐 ScraperAPI render=true — requesting…")
+        r = _requests.get(api_url, timeout=60)   # longer timeout: JS rendering takes ~10-20s
+        r.raise_for_status()
+        html = r.text
+        has_app   = "__PRODUCT_DETAIL_APP__" in html
+        has_price = bool(re.search(r'data-test-id="(checkout-price|price)"', html))
+        has_hb_price = bool(re.search(r'class="[^"]*price[^"]*"', html))
+        log.info(f"  🌐 ScraperAPI — "
+                 f"PRODUCT_APP={'✓' if has_app else '✗'}  "
+                 f"price-element={'✓' if has_price else '✗'}  "
+                 f"hb-price-class={'✓' if has_hb_price else '✗'}  "
+                 f"size={len(html):,}b")
+        if os.environ.get("GOLD_DEBUG_HTML"):
+            slug = re.sub(r'[^a-z0-9]', '_', url.split("/")[-1].lower())[:40]
+            fname = f"debug_scraperapi_{slug}.html"
+            with open(fname, "w", encoding="utf-8") as f:
+                f.write(html)
+            log.info(f"  💾 ScraperAPI debug HTML → {fname}")
+        # Accept if we got meaningful HB content (not a bot-block page)
+        return html if (has_app or has_price or has_hb_price) else None
+    except Exception as e:
+        log.warning(f"  ScraperAPI failed: {e}")
+        return None
+
 
 def fetch_hb_html_requests(url: str) -> Optional[str]:
     """
@@ -1526,22 +1577,39 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
 
             domain = urlparse(url).netloc.lower()
 
-            # ── HB fallback cascade: API JSON → curl_cffi/requests HTML ──────
+            # ── HB fallback cascade ───────────────────────────────────────────
+            # Sıra: ScraperAPI (residential IP) → JSON API → curl_cffi/requests
             if product.status in ("price_not_found", "error") and "hepsiburada.com" in domain:
 
-                # Fallback 1: internal JSON API (no HTML rendering needed)
-                log.info("  🔄 HB: trying internal JSON API…")
-                api_price, api_seller = fetch_hb_api_price(url, weight)
-                if api_price:
-                    prev_name = product.name if product.name not in ("N/A", "Unknown") else ""
-                    product = Product(
-                        site=site, name=prev_name or "Hepsiburada",
-                        weight=weight, price=api_price,
-                        url=url, seller=api_seller or product.seller or "",
-                    )
-                    log.info(f"  ✓ HB API OK: {fmt_price(product.price)}")
+                # Fallback 1: ScraperAPI — residential IP, bypasses Azure block
+                # Requires SCRAPERAPI_KEY env var / GitHub Secret
+                if os.environ.get("SCRAPERAPI_KEY"):
+                    log.info("  🔄 HB: trying ScraperAPI (residential IP)…")
+                    html_sa = fetch_via_scraperapi(url)
+                    if html_sa:
+                        try:
+                            product = parse_hepsiburada(html_sa, url, weight, js_data={})
+                            if product.status == "ok":
+                                log.info(f"  ✓ HB ScraperAPI OK: {fmt_price(product.price)}")
+                            else:
+                                log.warning("  ⚠ HB ScraperAPI: price not in HTML (JS-rendered?)")
+                        except Exception as exc:
+                            log.debug(f"  HB ScraperAPI parse error: {exc}")
 
-                # Fallback 2: curl_cffi / requests HTML fetch
+                # Fallback 2: internal JSON API
+                if product.status in ("price_not_found", "error"):
+                    log.info("  🔄 HB: trying internal JSON API…")
+                    api_price, api_seller = fetch_hb_api_price(url, weight)
+                    if api_price:
+                        prev_name = product.name if product.name not in ("N/A", "Unknown") else ""
+                        product = Product(
+                            site=site, name=prev_name or "Hepsiburada",
+                            weight=weight, price=api_price,
+                            url=url, seller=api_seller or product.seller or "",
+                        )
+                        log.info(f"  ✓ HB API OK: {fmt_price(product.price)}")
+
+                # Fallback 3: curl_cffi / plain requests HTML
                 if product.status in ("price_not_found", "error"):
                     log.info("  🔄 HB: trying curl_cffi/requests HTML…")
                     html_fb = fetch_hb_html_requests(url)
@@ -1824,8 +1892,23 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                 <td>{note}</td>
               </tr>"""
 
-        # Stokta olmayan ve fiyat alınamayan ürünler HTML'de gösterilmiyor.
-        # Sadece gerçekten satın alınabilir (ok) ürünler tabloda yer alır.
+        # Amazon TR OOS satırlarını göster (kullanıcı durumu görmek istiyor).
+        # Diğer sitelerde (HB, N11, Idefix) stokta yok satırları gizlenir.
+        amazon_oos = [p for p in group if p.site == "Amazon TR"
+                      and p.status in ("out_of_stock", "price_not_found", "error")]
+        # Sadece ok_items'da Amazon TR yoksa OOS satırını ekle (tekrar gösterme)
+        amazon_ok_names = {p.url for p in ok_items if p.site == "Amazon TR"}
+        for p in amazon_oos:
+            if p.url not in amazon_ok_names:
+                rows_html += f"""
+              <tr class="table-secondary text-muted">
+                <td>Amazon TR</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60] if p.name not in ('N/A','Unknown') else 'Amazon TR Ürünü'}</a></td>
+                <td>—</td>
+                <td class="text-end">—</td>
+                <td class="text-end">—</td>
+                <td><span class="badge bg-secondary">🚫 Stokta Yok</span></td>
+              </tr>"""
 
         if best:
             savings = ""
