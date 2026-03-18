@@ -1882,31 +1882,33 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
         for p in sorted(ok_items, key=lambda x: x.price or 0):
             rc   = _row_class(p, best, worst)
             note = _note(p, best, worst)
+            seller_sub = (f'<br><small class="text-muted d-md-none">{p.seller}</small>'
+                          if p.seller else "")
             rows_html += f"""
               <tr class="{rc}">
-                <td>{p.site}</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60]}</a></td>
-                <td>{p.seller or "—"}</td>
-                <td class="text-end fw-bold">{fmt_price(p.price)}</td>
-                <td class="text-end">{fmt_price(p.price_pgr)}/g</td>
-                <td>{note}</td>
+                <td class="text-nowrap small">{p.site}</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:55]}</a>{seller_sub}</td>
+                <td class="d-none d-md-table-cell">{p.seller or "—"}</td>
+                <td class="text-end fw-bold text-nowrap">{fmt_price(p.price)}</td>
+                <td class="text-end text-nowrap d-none d-sm-table-cell">{fmt_price(p.price_pgr)}/g</td>
+                <td class="text-nowrap">{note}</td>
               </tr>"""
 
         # Amazon TR OOS satırlarını göster (kullanıcı durumu görmek istiyor).
         # Diğer sitelerde (HB, N11, Idefix) stokta yok satırları gizlenir.
         amazon_oos = [p for p in group if p.site == "Amazon TR"
                       and p.status in ("out_of_stock", "price_not_found", "error")]
-        # Sadece ok_items'da Amazon TR yoksa OOS satırını ekle (tekrar gösterme)
         amazon_ok_names = {p.url for p in ok_items if p.site == "Amazon TR"}
         for p in amazon_oos:
             if p.url not in amazon_ok_names:
+                disp_name = p.name[:55] if p.name not in ('N/A', 'Unknown') else 'Amazon TR Ürünü'
                 rows_html += f"""
               <tr class="table-secondary text-muted">
-                <td>Amazon TR</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:60] if p.name not in ('N/A','Unknown') else 'Amazon TR Ürünü'}</a></td>
-                <td>—</td>
+                <td class="text-nowrap small">Amazon TR</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{disp_name}</a></td>
+                <td class="d-none d-md-table-cell">—</td>
                 <td class="text-end">—</td>
-                <td class="text-end">—</td>
+                <td class="text-end d-none d-sm-table-cell">—</td>
                 <td><span class="badge bg-secondary">🚫 Stokta Yok</span></td>
               </tr>"""
 
@@ -1921,12 +1923,12 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                            f'En pahalıya göre <strong>{fmt_price(diff)} ({pct:.1f}%)</strong> tasarruf</div>')
             best_deals_rows += f"""
               <tr>
-                <td><strong>{weight}</strong></td>
-                <td>{best.site}</td>
-                <td>{best.seller or "—"}</td>
-                <td class="text-end fw-bold text-success">{fmt_price(best.price)}</td>
-                <td class="text-end">{fmt_price(best.price_pgr)}/g</td>
-                <td><a href="{best.url}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">🔗 Görüntüle</a></td>
+                <td class="text-nowrap"><strong>{weight}</strong></td>
+                <td class="text-nowrap small">{best.site}</td>
+                <td class="d-none d-md-table-cell">{best.seller or "—"}</td>
+                <td class="text-end fw-bold text-success text-nowrap">{fmt_price(best.price)}</td>
+                <td class="text-end text-nowrap d-none d-sm-table-cell">{fmt_price(best.price_pgr)}/g</td>
+                <td><a href="{best.url}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">🔗</a></td>
               </tr>"""
         else:
             savings = ""
@@ -1938,17 +1940,21 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
             {"<span class='badge bg-success'>✓ " + str(len(ok_items)) + " ürün</span>" if ok_items else "<span class='badge bg-danger'>Ürün bulunamadı</span>"}
           </div>
           <div class="card-body p-0">
-            <table class="table table-hover mb-0">
+            <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
                 <tr>
-                  <th>Site</th><th>Ürün</th><th>Satıcı</th>
+                  <th class="small">Site</th>
+                  <th>Ürün</th>
+                  <th class="d-none d-md-table-cell">Satıcı</th>
                   <th class="text-end">Fiyat (TRY)</th>
-                  <th class="text-end">Gram Fiyatı</th>
+                  <th class="text-end d-none d-sm-table-cell">Gram Fiyatı</th>
                   <th>Not</th>
                 </tr>
               </thead>
               <tbody>{rows_html}</tbody>
             </table>
+            </div>
           </div>
           {f'<div class="card-footer bg-white">{savings}</div>' if savings else ""}
         </div>"""
@@ -1963,14 +1969,28 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
   <style>
     body {{ background: #f8f9fa; }}
     .hero {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-             color: white; padding: 2.5rem 0 2rem; }}
-    .hero h1 {{ font-size: 1.8rem; font-weight: 700; }}
-    .updated-badge {{ font-size: .85rem; opacity: .8; }}
+             color: white; padding: 2rem 0 1.5rem; }}
+    .hero h1 {{ font-size: 1.5rem; font-weight: 700; }}
+    .updated-badge {{ font-size: .82rem; opacity: .85; }}
     .table td, .table th {{ vertical-align: middle; }}
     .table-success td {{ color: #0a3622 !important; }}
     a {{ text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     .footer {{ font-size: .8rem; color: #6c757d; padding: 1.5rem 0; text-align: center; }}
+    /* Mobile tweaks */
+    @media (max-width: 575.98px) {{
+      .table {{ font-size: .82rem; }}
+      .table td, .table th {{ padding: .4rem .5rem; }}
+      .hero h1 {{ font-size: 1.25rem; }}
+      .card-header {{ font-size: .9rem; }}
+      .badge {{ font-size: .72rem; }}
+      .btn-sm {{ font-size: .75rem; padding: .2rem .4rem; }}
+      .container {{ padding-left: .75rem; padding-right: .75rem; }}
+    }}
+    @media (min-width: 576px) and (max-width: 767.98px) {{
+      .table {{ font-size: .88rem; }}
+      .table td, .table th {{ padding: .45rem .6rem; }}
+    }}
   </style>
 </head>
 <body>
@@ -1994,17 +2014,21 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
   <div class="card mb-4 border-warning shadow">
     <div class="card-header bg-warning text-dark fw-bold">✅ En İyi Fırsatlar Özeti</div>
     <div class="card-body p-0">
-      <table class="table table-hover mb-0">
+      <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
-            <th>Ağırlık</th><th>Site</th><th>Satıcı</th>
+            <th>Ağırlık</th>
+            <th class="small">Site</th>
+            <th class="d-none d-md-table-cell">Satıcı</th>
             <th class="text-end">En Düşük Fiyat</th>
-            <th class="text-end">Gram Fiyatı</th>
+            <th class="text-end d-none d-sm-table-cell">Gram Fiyatı</th>
             <th>Link</th>
           </tr>
         </thead>
         <tbody>{best_deals_rows}</tbody>
       </table>
+      </div>
     </div>
   </div>
 
