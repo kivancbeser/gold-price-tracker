@@ -57,7 +57,10 @@ jobs:
         run: python gold_scraper_pro.py --html
         env:
           PYTHONUNBUFFERED: "1"
-          GOLD_DEBUG_HTML: "1"   # Bot-blocked sayfalarin HTML'ini kaydet
+          GOLD_DEBUG_HTML: "1"
+          # Hepsiburada için ScraperAPI key (ücretsiz: scraperapi.com)
+          # GitHub repo → Settings → Secrets → SCRAPERAPI_KEY olarak ekle
+          SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
 
       # ── 8. Debug HTML'leri artifact olarak yükle (sorun giderme) ──────────
       - name: Upload debug HTML artifacts
