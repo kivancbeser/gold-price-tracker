@@ -107,6 +107,8 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         # Idefix
         {"url": "https://www.idefix.com/5-gr-gram-22-ayar-ajda-bilezik-p-16587034",                        "site": "Idefix"},
         {"url": "https://www.idefix.com/kado-kuyumculuk-5-gr-gram-22-ayar-zikzak-ajda-bilezik-p-14932657", "site": "Idefix"},
+        # Trendyol
+        {"url": "https://www.trendyol.com/milenyum/5-gr-22-ayar-ajda-bilezik-p-117435765",                 "site": "Trendyol"},
     ],
 
     # ── 10 GRAM ───────────────────────────────────────────────────────────────
@@ -124,6 +126,8 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         # Idefix
         {"url": "https://www.idefix.com/anadolum-altin-10-gr-22-ayar-ajda-bilezik-p-12912190",             "site": "Idefix"},
         {"url": "https://www.idefix.com/10-grgram-22-ayar-isciliksiz-ajda-bilezik-p-6917062",              "site": "Idefix"},
+        # Trendyol
+        {"url": "https://www.trendyol.com/milenyum/10-gr-22-ayar-ajda-bilezik-mucevher-p-117435799",       "site": "Trendyol"},
     ],
 
     # ── 15 GRAM ───────────────────────────────────────────────────────────────
@@ -139,6 +143,8 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         # Idefix
         {"url": "https://www.idefix.com/15-grgram-15-mm-22-ayar-isciliksiz-bilezik-p-6916749",             "site": "Idefix"},
         {"url": "https://www.idefix.com/15-grgram-15-mm-22-ayar-isciliksiz-duz-trabzon-bilezik-p-6917296", "site": "Idefix"},
+        # Trendyol
+        {"url": "https://www.trendyol.com/milenyum/15-gr-22-ayar-ajda-bilezik-p-117435812",                "site": "Trendyol"},
     ],
 
     # ── 20 GRAM ───────────────────────────────────────────────────────────────
@@ -154,7 +160,48 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
         # Idefix
         {"url": "https://www.idefix.com/20-grgram-22-ayar-isciliksiz-bilezik-p-6917327",                   "site": "Idefix"},
         {"url": "https://www.idefix.com/20-grgram-20-mm-22-ayar-isciliksiz-bilezik-p-6917426",             "site": "Idefix"},
+        # Trendyol
+        {"url": "https://www.trendyol.com/milenyum/20-gr-22-ayar-ajda-bilezik-p-117435820",                "site": "Trendyol"},
+        {"url": "https://www.trendyol.com/milenyum/20-gr-mucevher-burma-bilezik-mucevher-p-212345166",     "site": "Trendyol"},
     ],
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SEARCH-BASED DISCOVERY — her gün sitelerde otomatik arama yapar
+#  PRODUCT_URLS yedek olarak kalır (search başarısız olursa devreye girer)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# True = önce arama sayfalarını tara, ürün URL'lerini dinamik bul
+# False = sadece PRODUCT_URLS'deki sabit linklere bak
+SEARCH_MODE = True
+
+# Her site + ağırlık kombinasyonu için kaç ürün alınacak (en ucuzdan)
+MAX_RESULTS_PER_SITE = 3
+
+# Arama anahtar kelimeleri (her ağırlık için)
+SEARCH_QUERIES: Dict[str, str] = {
+    "5g":  "22 ayar 5 gram bilezik",
+    "10g": "22 ayar 10 gram bilezik",
+    "15g": "22 ayar 15 gram bilezik",
+    "20g": "22 ayar 20 gram bilezik",
+}
+
+# Ağırlık doğrulama — arama sonuçlarında yanlış gram gelmesin diye
+WEIGHT_PATTERNS: Dict[str, str] = {
+    "5g":  r'\b5\s*gr',
+    "10g": r'\b10\s*gr',
+    "15g": r'\b15\s*gr',
+    "20g": r'\b20\s*gr',
+}
+
+# Site arama URL şablonları ({q} → arama sorgusu)
+SITE_SEARCH_TEMPLATES: Dict[str, str] = {
+    "Hepsiburada": "https://www.hepsiburada.com/ara?q={q}&siralama=artanFiyat",
+    "Amazon TR":   "https://www.amazon.com.tr/s?k={q}&s=price-asc-rank&language=tr_TR",
+    "N11":         "https://www.n11.com/arama?q={q}&srt=PRICE_LOW",
+    "Idefix":      "https://www.idefix.com/search?q={q}&sort=priceAsc",
+    # Trendyol: kategori sayfası + ağırlık filtresi, fiyata göre artan sırala
+    "Trendyol":    "https://www.trendyol.com/yatirimlik-altin-bilezik-x-c109006?q={q}&sst=PRICE_BY_ASC",
 }
 
 # ── Behaviour knobs ───────────────────────────────────────────────────────────
@@ -165,10 +212,11 @@ HEADLESS       = True     # set False to watch the browser while debugging
 
 # Sanity guard — overwritten at startup by fetch_live_gold_price_try().
 # Fallback: 5,500 TRY/g (conservative lower bound, well below market).
-# Actual threshold = live_22ayar_price × SANITY_RATIO (e.g. 0.88 = allow 12% below market).
+# Actual threshold = live_22ayar_price × SANITY_RATIO (e.g. 0.95 = allow 5% below market).
+# 22-ayar yatırımlık bilezik için %5'ten fazla indirim gerçekçi değil — muhtemelen hatalı veri.
 MIN_PRICE_PER_GRAM_TRY: float = 5_500.0
 MAX_PRICE_PER_GRAM_TRY: float = 50_000.0  # upper bound — also overwritten at startup
-SANITY_RATIO           : float = 0.88   # products priced below 88% of market are rejected
+SANITY_RATIO           : float = 0.95   # products priced below 95% of market are rejected
 MAX_SANITY_RATIO       : float = 2.50   # products priced above 250% of market are rejected
 
 # Weight as integer grams — used for price-per-gram calculation
@@ -223,6 +271,7 @@ def site_from_url(url: str) -> str:
         "amazon.com.tr":   "Amazon TR",
         "n11.com":         "N11",
         "idefix.com":      "Idefix",
+        "trendyol.com":    "Trendyol",
     }.items():
         if key in domain:
             return name
@@ -342,6 +391,214 @@ def _meta_price(html: str) -> Optional[float]:
             if val:
                 return val
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SEARCH RESULT PARSERS — arama sayfalarından ürün URL'si + fiyat çeker
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _weight_ok(name: str, weight: str) -> bool:
+    """Ürün adında doğru gram ağırlığı var mı kontrol eder."""
+    pat = WEIGHT_PATTERNS.get(weight, "")
+    return bool(re.search(pat, name, re.I)) if pat else True
+
+
+def _extract_links_prices(html: str, base_url: str,
+                           href_pat: str, price_vicinity: int = 300
+                           ) -> List[Tuple[str, Optional[float]]]:
+    """
+    Genel yardımcı: href_pat ile URL'leri bul, yakınındaki ilk geçerli fiyatı al.
+    (base_url) → tam URL'e dönüştürür.
+    """
+    from urllib.parse import urljoin
+    results = []
+    for m in re.finditer(href_pat, html, re.I):
+        href  = m.group(1)
+        full  = urljoin(base_url, href) if not href.startswith("http") else href
+        start = m.end()
+        block = re.sub(r"<[^>]+>", " ", html[start: start + price_vicinity])
+        price = None
+        for pm in re.finditer(r"([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)", block):
+            v = parse_try_price(pm.group(1))
+            if v and v > 5_000:
+                price = v
+                break
+        results.append((full, price))
+    return results
+
+
+def parse_search_n11(html: str, weight: str) -> List[dict]:
+    """N11 arama sayfasından ürün URL + fiyat listesi döndürür."""
+    found = []
+    # N11 arama sonuçları: <a class="p-w-list-item-content-heading" href="...">isim</a>
+    # veya <div class="product-title"><a href="...">isim</a>
+    for pat in [
+        r'<a[^>]+class="[^"]*p-w-list-item-content-heading[^"]*"[^>]+href="([^"]+)"[^>]*>([^<]+)',
+        r'href="(https?://[^"]*n11\.com/urun/[^"]+)"[^>]*>\s*<[^>]+>\s*([^<]{5,80})',
+        r'href="(https?://[^"]*n11\.com/urun/[^"]+)"',
+    ]:
+        for m in re.finditer(pat, html, re.I):
+            url  = m.group(1)
+            name = m.group(2).strip() if m.lastindex >= 2 else ""
+            if not _weight_ok(name or url, weight):
+                continue
+            # Fiyat: price-currency
+            start = m.end()
+            block = re.sub(r"<[^>]+>", " ", html[max(0, m.start()-100): start + 400])
+            price = None
+            for pm in re.finditer(r"([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)", block):
+                v = parse_try_price(pm.group(1))
+                if v and v > 5_000:
+                    price = v
+                    break
+            if url not in [f["url"] for f in found]:
+                found.append({"url": url, "site": "N11", "name": name, "price": price})
+        if found:
+            break
+    return found[:MAX_RESULTS_PER_SITE * 2]
+
+
+def parse_search_idefix(html: str, weight: str) -> List[dict]:
+    """Idefix arama sayfasından ürün URL + fiyat listesi döndürür."""
+    found = []
+    for pat in [
+        r'href="(https?://www\.idefix\.com/[^"?#]+?-p-\d+)"[^>]*>.*?<[^>]+class="[^"]*product[^"]*title[^"]*"[^>]*>([^<]{5,80})',
+        r'href="(https?://www\.idefix\.com/[^"?#]+?-p-\d+)"',
+        r'href="(/[^"?#]+?-p-\d+)"',
+    ]:
+        for m in re.finditer(pat, html, re.I | re.S):
+            href = m.group(1)
+            url  = href if href.startswith("http") else f"https://www.idefix.com{href}"
+            name = m.group(2).strip() if m.lastindex >= 2 else ""
+            if not _weight_ok(name or url, weight):
+                continue
+            start = m.end()
+            block = re.sub(r"<[^>]+>", " ", html[max(0, m.start()-100): start + 400])
+            price = None
+            for pm in re.finditer(r"([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)", block):
+                v = parse_try_price(pm.group(1))
+                if v and v > 5_000:
+                    price = v
+                    break
+            if url not in [f["url"] for f in found]:
+                found.append({"url": url, "site": "Idefix", "name": name, "price": price})
+        if found:
+            break
+    return found[:MAX_RESULTS_PER_SITE * 2]
+
+
+def parse_search_amazon(html: str, weight: str) -> List[dict]:
+    """Amazon TR arama sayfasından ürün URL + fiyat listesi döndürür."""
+    found = []
+    # Amazon arama: data-asin attribute + /dp/ASIN URL pattern
+    for m in re.finditer(
+        r'data-asin="([A-Z0-9]{10})"[^>]*>.*?'
+        r'<h2[^>]*>.*?<a[^>]+href="(/[^"]+/dp/[A-Z0-9]{10}[^"]*)"[^>]*>.*?'
+        r'<span[^>]*>([^<]{5,100})</span>',
+        html, re.S | re.I,
+    ):
+        asin = m.group(1)
+        path = m.group(2)
+        name = m.group(3).strip()
+        url  = f"https://www.amazon.com.tr/dp/{asin}"
+        if not _weight_ok(name or url, weight):
+            continue
+        # Fiyat: a-offscreen span
+        start = m.start()
+        block = html[start: start + 2000]
+        price = None
+        for pm in re.finditer(
+            r'class="a-offscreen"[^>]*>\s*[₺TL]?\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)',
+            block, re.I,
+        ):
+            v = parse_try_price(pm.group(1))
+            if v and v > 5_000:
+                price = v
+                break
+        if url not in [f["url"] for f in found]:
+            found.append({"url": url, "site": "Amazon TR", "name": name, "price": price})
+    # Fallback: sadece /dp/ linkleri
+    if not found:
+        for m in re.finditer(r'href="(/[^"]*?/dp/([A-Z0-9]{10})[^"]*)"', html, re.I):
+            url  = f"https://www.amazon.com.tr/dp/{m.group(2)}"
+            if url not in [f["url"] for f in found]:
+                found.append({"url": url, "site": "Amazon TR", "name": "", "price": None})
+    return found[:MAX_RESULTS_PER_SITE * 2]
+
+
+def parse_search_hb(html: str, weight: str) -> List[dict]:
+    """Hepsiburada arama sayfasından ürün URL + fiyat listesi döndürür."""
+    found = []
+    # HB arama: ürün kartı linki -pm-HBC... ile biter
+    for pat in [
+        r'href="(https?://www\.hepsiburada\.com/[^"?#]*-pm-[A-Z0-9]+)"[^>]*>([^<]{5,80})',
+        r'href="(https?://www\.hepsiburada\.com/[^"?#]*-pm-[A-Z0-9]+)"',
+    ]:
+        for m in re.finditer(pat, html, re.I):
+            url  = m.group(1)
+            name = m.group(2).strip() if m.lastindex >= 2 else ""
+            if not _weight_ok(name or url, weight):
+                continue
+            start = m.end()
+            block = re.sub(r"<[^>]+>", " ", html[max(0, m.start()-50): start + 400])
+            price = None
+            for pm in re.finditer(r"([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)", block):
+                v = parse_try_price(pm.group(1))
+                if v and v > 5_000:
+                    price = v
+                    break
+            if url not in [f["url"] for f in found]:
+                found.append({"url": url, "site": "Hepsiburada", "name": name, "price": price})
+        if found:
+            break
+    return found[:MAX_RESULTS_PER_SITE * 2]
+
+
+async def discover_urls_for_weight(
+    browser, weight: str
+) -> Dict[str, List[dict]]:
+    """
+    Her site için arama sayfasını çeker, ürün URL'lerini döndürür.
+    Dönüş: {"N11": [...], "Idefix": [...], "Amazon TR": [...], "Hepsiburada": [...]}
+    """
+    from urllib.parse import quote_plus
+    query   = SEARCH_QUERIES[weight]
+    results: Dict[str, List[dict]] = {}
+
+    for site, template in SITE_SEARCH_TEMPLATES.items():
+        search_url = template.replace("{q}", quote_plus(query))
+        log.info(f"  🔍 [{weight}] {site} arama → {search_url[:80]}")
+        try:
+            html, _ = await fetch_page_pw(browser, search_url)
+            if not html:
+                log.warning(f"  ⚠ [{weight}] {site}: arama sayfası yüklenemedi")
+                results[site] = []
+                continue
+            if site == "N11":
+                items = parse_search_n11(html, weight)
+            elif site == "Idefix":
+                items = parse_search_idefix(html, weight)
+            elif site == "Amazon TR":
+                items = parse_search_amazon(html, weight)
+            elif site == "Trendyol":
+                items = parse_search_trendyol(html, weight)
+            else:
+                items = parse_search_hb(html, weight)
+
+            # Fiyata göre sırala (fiyat biliniyorsa), en ucuz MAX_RESULTS_PER_SITE kadar al
+            items_with_price = [i for i in items if i.get("price")]
+            items_no_price   = [i for i in items if not i.get("price")]
+            items_sorted     = sorted(items_with_price, key=lambda x: x["price"]) + items_no_price
+            results[site]    = items_sorted[:MAX_RESULTS_PER_SITE]
+
+            log.info(f"  ✓ [{weight}] {site}: {len(results[site])} ürün bulundu "
+                     f"({len(items)} toplam)")
+        except Exception as e:
+            log.warning(f"  ✗ [{weight}] {site} arama hatası: {e}")
+            results[site] = []
+        random_delay()
+
+    return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -932,24 +1189,44 @@ def parse_amazon(html: str, url: str, weight: str) -> Product:
     site = "Amazon TR"
     name = _h1(html)
 
-    # OOS detection for Amazon — use positive signals first.
-    # "Sepete Ekle" / "add-to-cart-button" is the most reliable in-stock signal.
-    # Only fall back to text scanning if no buy button is found at all.
+    # OOS detection for Amazon:
+    # Pozitif sinyal: "Sepete Ekle" butonu var mı?
+    # Negatif sinyal: "Öne çıkan teklif yok" = buybox'sız, satın alınamaz
+    oos_scope = html[:20000]
+
+    # Pozitif sinyal: "Sepete Ekle" / "Şimdi Al" butonları — ID veya Türkçe metin ile.
+    # buyingPrice kaldırıldı: buybox olmayan sayfalarda da HTML'de görünüyor.
     has_cart_btn = bool(re.search(
-        r'id="add-to-cart-button"|id="buy-now-button"|name="submit\.add-to-cart"'
-        r'|buyingPrice|id="buybox"',
+        r'id="add-to-cart-button"'
+        r'|id="buy-now-button"'
+        r'|name="submit\.add-to-cart"'
+        r'|[Ss]epete\s+[Ee]kle'           # Türkçe buton metni
+        r'|[Şş]imdi\s+[Aa]l'             # Türkçe "Şimdi Al"
+        r'|[Aa]dd\s+to\s+[Cc]art',
         html, re.I,
     ))
+    # "Öne çıkan teklif yok" = buybox yok, satın alınamaz
+    no_featured_offer = bool(re.search(
+        r'[Öö]ne\s+[çc][ıi]kan\s+teklif\s+yok'
+        r'|no\s+featured\s+offers?\s+available',
+        oos_scope, re.I,
+    ))
+    if no_featured_offer and not has_cart_btn:
+        log.warning("  Amazon: 'Öne çıkan teklif yok' + cart butonu yok → out_of_stock")
+        return Product(site=site, name=name, weight=weight, price=None,
+                       url=url, status="out_of_stock")
+
     if not has_cart_btn:
-        # No buy button → check for OOS phrases scoped to first ~15 KB
-        # (avoids picking up "mevcut değil" from recommended products section)
-        oos_scope = html[:15000]
         if _oos(oos_scope):
-            log.debug("  Amazon: no buy-button + OOS phrase found → out_of_stock")
+            log.debug("  Amazon: cart butonu yok + OOS ifadesi → out_of_stock")
             return Product(site=site, name=name, weight=weight, price=None,
                            url=url, status="out_of_stock")
-    else:
-        log.debug("  Amazon: buy-button present → treating as in-stock")
+        # Sepet butonu yok ama OOS sinyali de yok → sayfa tam render olmamış olabilir.
+        # price_not_found döndür: curl_cffi fallback daha iyi bir HTML getirebilir.
+        log.warning("  Amazon: cart butonu bulunamadı → price_not_found (curl_cffi denenecek)")
+        return Product(site=site, name=name, weight=weight, price=None,
+                       url=url, status="price_not_found")
+    log.debug("  Amazon: cart butonu mevcut → stokta")
 
     price: Optional[float] = None
 
@@ -1145,6 +1422,156 @@ def parse_idefix(html: str, url: str, weight: str) -> Product:
                        url=url, status="price_not_found", seller=seller)
     return Product(site=site, name=name, weight=weight, price=price,
                    url=url, seller=seller)
+
+
+# ── Trendyol ──────────────────────────────────────────────────────────────────
+def parse_trendyol(html: str, url: str, weight: str) -> Product:
+    site = "Trendyol"
+    name = _h1(html)
+
+    # Trendyol'da sepet / şimdi al butonu pozitif sinyal olarak alınır.
+    # Sayfa içinde başka ürün açıklamalarında da "stokta yok" ifadesi geçebileceğinden
+    # _oos() çağrısını yalnızca buton YOK iken yapıyoruz.
+    has_cart_btn_ty = bool(re.search(
+        r'data-testid="add-to-cart-button"'
+        r'|data-testid="buy-now-button"'
+        r'|class="[^"]*add-to-cart-button[^"]*"'
+        r'|class="[^"]*buy-now-button[^"]*"',
+        html, re.I,
+    ))
+    if not has_cart_btn_ty and _oos(html):
+        return Product(site=site, name=name, weight=weight, price=None,
+                       url=url, status="out_of_stock")
+
+    price:  Optional[float] = None
+    seller: str             = ""
+
+    # ── Priority 1: __NEXT_DATA__ JSON (Next.js SSR) ──────────────────────────
+    # Trendyol renders the full product JSON in <script id="__NEXT_DATA__">
+    mm = re.search(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if mm:
+        try:
+            data = json.loads(mm.group(1))
+            # Navigate: props.pageProps.product  OR  props.pageProps.productDetail
+            pp = (data.get("props") or {}).get("pageProps") or {}
+            product_data = pp.get("product") or pp.get("productDetail") or {}
+            if not product_data:
+                # Sometimes nested under initialState
+                state = pp.get("initialState") or {}
+                product_data = (state.get("productDetail") or {}).get("product") or {}
+
+            # Price: discountedPrice > promotionPrice > price
+            price_info = product_data.get("price") or {}
+            for key in ("discountedPrice", "promotionPrice", "sellingPrice", "price"):
+                raw = price_info.get(key) if isinstance(price_info, dict) else None
+                if raw is None:
+                    raw = product_data.get(key)
+                if raw is not None:
+                    price = sanity_check(parse_try_price(str(raw)), weight)
+                    if price:
+                        log.debug(f"  TY __NEXT_DATA__ {key}: {price}")
+                        break
+
+            # Seller / brand
+            brand = product_data.get("brand") or {}
+            seller = (brand.get("name") if isinstance(brand, dict) else str(brand)) or ""
+            if not seller:
+                seller = str(product_data.get("merchantName") or
+                             product_data.get("sellerName") or "")
+
+            # Product name from JSON (more reliable than h1 if page was bot-blocked)
+            if name in ("Unknown", "N/A", ""):
+                name = str(product_data.get("name") or product_data.get("title") or name)
+        except Exception as e:
+            log.debug(f"  TY __NEXT_DATA__ parse error: {e}")
+
+    # ── Priority 2: window.__PRODUCT_DETAIL_APP__ style JSON var ─────────────
+    if not price:
+        for pat in [
+            r'"discountedPrice"\s*:\s*([\d.]+)',
+            r'"promotionPrice"\s*:\s*([\d.]+)',
+            r'"sellingPrice"\s*:\s*([\d.]+)',
+            r'"price"\s*:\s*([\d.]+)',
+        ]:
+            mm = re.search(pat, html)
+            if mm:
+                price = sanity_check(parse_try_price(mm.group(1)), weight)
+                if price:
+                    break
+
+    # ── Priority 3: HTML price elements ───────────────────────────────────────
+    if not price:
+        for pat in [
+            r'class="[^"]*prc-box-dscntd[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',  # indirimli
+            r'class="[^"]*prc-box-sllng[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',   # satış fiyatı
+            r'class="[^"]*product-price[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
+            r'itemprop="price"\s+content="([^"]+)"',
+        ]:
+            mm = re.search(pat, html, re.I)
+            if mm:
+                price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
+                if price:
+                    break
+
+    # ── Priority 4: JSON-LD / meta ────────────────────────────────────────────
+    if not price:
+        price = sanity_check(_json_ld_price(html), weight) or \
+                sanity_check(_meta_price(html), weight)
+
+    # ── Seller fallback ────────────────────────────────────────────────────────
+    if not seller:
+        seller = _extract_seller_html(html, [
+            r'"merchantName"\s*:\s*"([^"]{2,60})"',
+            r'"sellerName"\s*:\s*"([^"]{2,60})"',
+            r'"brandName"\s*:\s*"([^"]{2,60})"',
+            r'class="[^"]*merchant[^"]*"[^>]*>\s*([^<]{2,60})',
+        ])
+
+    if price is None:
+        return Product(site=site, name=name, weight=weight, price=None,
+                       url=url, status="price_not_found", seller=seller)
+    return Product(site=site, name=name, weight=weight, price=price,
+                   url=url, seller=seller)
+
+
+def parse_search_trendyol(html: str, weight: str) -> List[dict]:
+    """Trendyol kategori/arama sayfasından ürün URL + fiyat listesi döndürür."""
+    found = []
+
+    # Trendyol ürün kartları: <div class="p-card-wrppr" data-id="...">
+    # Link:  <a href="/marka/urun-adi-p-ID">
+    # Fiyat: <span class="prc-box-dscntd">74.057,99 TL</span>
+    #    ya da <span class="prc-box-sllng">74.057,99 TL</span>
+    for m in re.finditer(
+        r'href="(/[^"]+?-p-(\d+)(?:\?[^"]*)?)"',
+        html, re.I,
+    ):
+        path    = m.group(1).split("?")[0]   # query string'i at
+        prod_id = m.group(2)
+        url     = f"https://www.trendyol.com{path}"
+
+        # İsim: URL slug'dan
+        slug = path.split("/")[-1]
+        slug = re.sub(r'-p-\d+$', '', slug)
+        name = ' '.join(w.capitalize() for w in slug.replace('-', ' ').split())
+
+        if not _weight_ok(name or path, weight):
+            continue
+
+        # Fiyat: yakın çevredeki ilk fiyat
+        start = m.start()
+        block = re.sub(r'<[^>]+>', ' ', html[start: start + 600])
+        price = None
+        for pm in re.finditer(r'([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)', block):
+            v = parse_try_price(pm.group(1))
+            if v and v > 5_000:
+                price = v
+                break
+
+        if url not in [f["url"] for f in found]:
+            found.append({"url": url, "site": "Trendyol", "name": name, "price": price})
+
+    return found[:MAX_RESULTS_PER_SITE * 2]
 
 
 # ── Generic fallback ──────────────────────────────────────────────────────────
@@ -1525,15 +1952,6 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
         log.error("Playwright not installed. Run: pip3 install playwright && python3 -m playwright install chromium")
         return []
 
-    tasks: List[tuple] = []
-    for weight, entries in url_map.items():
-        for entry in entries:
-            tasks.append((weight, entry["url"], entry.get("site") or site_from_url(entry["url"])))
-
-    if not tasks:
-        log.warning("No product URLs configured.")
-        return []
-
     results: List[Product] = []
 
     async with async_playwright() as pw:
@@ -1547,6 +1965,50 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                 "--disable-extensions",
             ],
         )
+
+        # ── SEARCH MODE: arama sayfalarından dinamik URL keşfi ────────────────
+        if SEARCH_MODE:
+            log.info("🔍 SEARCH MODE aktif — arama sayfaları taranıyor…\n")
+            dynamic_map: Dict[str, List[dict]] = {w: [] for w in WEIGHT_GRAMS}
+            for weight in WEIGHT_GRAMS:
+                discovered = await discover_urls_for_weight(browser, weight)
+                for site, items in discovered.items():
+                    for item in items:
+                        dynamic_map[weight].append({
+                            "url":  item["url"],
+                            "site": item["site"],
+                        })
+            # Hardcoded URL'leri her zaman ekle — teminat olarak.
+            # Search URL'leri bulsa bile hepsi OOS/hatalı çıkabilir; hardcoded liste sigortadır.
+            # Aynı URL birden fazla kez eklense bile seen_urls (task building'de) duplikasyonu önler.
+            for weight in WEIGHT_GRAMS:
+                for entry in url_map.get(weight, []):
+                    site = entry.get("site") or site_from_url(entry["url"])
+                    log.debug(f"  📌 [{weight}] {site}: hardcoded URL listeye eklendi → {entry['url'][:60]}")
+                    dynamic_map[weight].append(entry)
+                if not dynamic_map[weight]:
+                    log.warning(f"  ⚠ [{weight}] Hiç URL bulunamadı")
+            active_map = dynamic_map
+            total_dynamic = sum(len(v) for v in dynamic_map.values())
+            log.info(f"\n✅ Search tamamlandı — toplam {total_dynamic} ürün URL'si bulundu\n")
+        else:
+            active_map = url_map
+
+        # ── URL listesini düz görev listesine çevir ───────────────────────────
+        tasks: List[tuple] = []
+        for weight, entries in active_map.items():
+            seen_urls: set = set()
+            for entry in entries:
+                u = entry["url"]
+                if u not in seen_urls:
+                    seen_urls.add(u)
+                    tasks.append((weight, u, entry.get("site") or site_from_url(u)))
+
+        if not tasks:
+            log.warning("No product URLs configured.")
+            await browser.close()
+            return []
+
         log.info(f"Browser launched (headless={HEADLESS}). Scraping {len(tasks)} URL(s) …\n")
 
         for idx, (weight, url, site) in enumerate(tasks, 1):
@@ -1568,6 +2030,8 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                         product = parse_n11(html, url, weight)
                     elif "idefix.com" in domain:
                         product = parse_idefix(html, url, weight)
+                    elif "trendyol.com" in domain:
+                        product = parse_trendyol(html, url, weight)
                     else:
                         product = parse_generic(html, url, weight)
                 except Exception as exc:
@@ -1636,6 +2100,42 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
                             log.warning("  ⚠ Amazon HTML fallback: price still not found")
                     except Exception as exc:
                         log.debug(f"  Amazon HTML fallback parse error: {exc}")
+
+            # ── Amazon OOS fallback: hardcoded listeden alternatif URL dene ───
+            # Dinamik arama veya mevcut URL stokta yoksa PRODUCT_URLS'deki
+            # diğer Amazon URL'lerini sırayla dene, birinde fiyat bulursa onu kullan.
+            if product.status == "out_of_stock" and "amazon.com.tr" in domain:
+                fallback_amazon_urls = [
+                    e["url"] for e in url_map.get(weight, [])
+                    if "amazon.com.tr" in e.get("url", "") and e["url"] != url
+                ]
+                if fallback_amazon_urls:
+                    log.info(
+                        f"  🔄 Amazon OOS → hardcoded listede "
+                        f"{len(fallback_amazon_urls)} alternatif URL deneniyor…"
+                    )
+                    for fb_url in fallback_amazon_urls:
+                        log.info(f"     Deneniyor: {truncate(fb_url, 70)}")
+                        html_fb, _ = await fetch_page_pw(browser, fb_url)
+                        if html_fb is None:
+                            # Playwright başarısız → curl_cffi dene
+                            html_fb = fetch_amazon_requests(fb_url)
+                        if html_fb:
+                            try:
+                                fb_product = parse_amazon(html_fb, fb_url, weight)
+                                if fb_product.status == "ok":
+                                    product = fb_product
+                                    log.info(
+                                        f"  ✓ Amazon hardcoded fallback OK: "
+                                        f"{fmt_price(product.price)}"
+                                    )
+                                    break
+                                else:
+                                    log.debug(f"     → {fb_product.status}")
+                            except Exception as exc:
+                                log.debug(f"     → parse error: {exc}")
+                    if product.status == "out_of_stock":
+                        log.warning("  ⚠ Amazon: tüm hardcoded fallback URL'ler OOS/hatalı")
 
             # ── Debug HTML dump ────────────────────────────────────────────────
             if product.status in ("price_not_found", "error") and os.environ.get("GOLD_DEBUG_HTML"):
@@ -1894,23 +2394,7 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                 <td class="text-nowrap">{note}</td>
               </tr>"""
 
-        # Amazon TR OOS satırlarını göster (kullanıcı durumu görmek istiyor).
-        # Diğer sitelerde (HB, N11, Idefix) stokta yok satırları gizlenir.
-        amazon_oos = [p for p in group if p.site == "Amazon TR"
-                      and p.status in ("out_of_stock", "price_not_found", "error")]
-        amazon_ok_names = {p.url for p in ok_items if p.site == "Amazon TR"}
-        for p in amazon_oos:
-            if p.url not in amazon_ok_names:
-                disp_name = p.name[:55] if p.name not in ('N/A', 'Unknown') else 'Amazon TR Ürünü'
-                rows_html += f"""
-              <tr class="table-secondary text-muted">
-                <td class="text-nowrap small">Amazon TR</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{disp_name}</a></td>
-                <td class="d-none d-md-table-cell">—</td>
-                <td class="text-end">—</td>
-                <td class="text-end d-none d-sm-table-cell">—</td>
-                <td><span class="badge bg-secondary">🚫 Stokta Yok</span></td>
-              </tr>"""
+        # Stokta yok / fiyat alınamadı ürünler tabloda gösterilmez — sadece ok olanlar listelenir
 
         if best:
             savings = ""
@@ -2010,7 +2494,7 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
       🕐 Son güncelleme: <strong>{ts}</strong> {gold_info}
     </p>
     <p class="updated-badge mb-0 opacity-75">
-      Hepsiburada · Amazon TR · N11 · Idefix &nbsp;|&nbsp;
+      Hepsiburada · Amazon TR · N11 · Idefix · Trendyol &nbsp;|&nbsp;
       Sadece stokta olan ürünler gösterilmektedir
     </p>
   </div>

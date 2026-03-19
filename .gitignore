@@ -17,6 +17,10 @@ build/
 debug_hb.py
 *.html.bak
 hb_debug_*.html
+debug_*.html
+
+# Auto-generated — GitHub Actions tarafından commit edilir, local çalışmalar ignore edilir
+docs/index.html
 
 # Virtual environments
 .venv/
