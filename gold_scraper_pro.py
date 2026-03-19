@@ -907,9 +907,11 @@ def fetch_hb_api_price(url: str, weight: str) -> Tuple[Optional[float], str]:
 
 def fetch_live_gold_price_try() -> Optional[float]:
     """
-    Fetch today's live gram-gold price (24-ayar) from bigpara.hurriyet.com.tr
-    and return the 22-ayar equivalent (×0.916).
-    Returns None if the fetch fails for any reason.
+    bigpara.hurriyet.com.tr/altin/gram-altin-fiyati/ sayfasından
+    22 ayar gram altın fiyatını doğrudan çeker.
+    Sayfa hem 24 hem 22 ayar satırlarını listeler; "22 ayar" etiketinin
+    yakınındaki fiyatı alırız — hesaplama gerekmez.
+    Fallback: sayfadaki ilk makul gram fiyatı × 0.916.
     """
     if not REQUESTS_OK:
         return None
@@ -920,21 +922,34 @@ def fetch_live_gold_price_try() -> Optional[float]:
             headers=headers, timeout=10,
         )
         r.raise_for_status()
-        # bigpara renders price as e.g. "7.126,33" inside a span
+        html = r.text
+
+        # ── Öncelik 1: "22 Ayar" etiketinin hemen yanındaki fiyat ───────────
+        m22 = re.search(
+            r'22\s*[Aa]yar[^<]{0,300}?([\d]{1,2}\.[\d]{3},[\d]{2})',
+            html, re.S,
+        )
+        if m22:
+            price = parse_try_price(m22.group(1))
+            if price and 4_000 < price < 20_000:
+                log.info(f"  📈 22 Ayar gram altın (bigpara doğrudan): {fmt_price(price)}/g")
+                return round(price, 2)
+
+        # ── Fallback: 24 ayar × 0.916 ────────────────────────────────────────
         m = re.search(
             r'(?:gram[- ]alt[iı]n|GAU)[^<]{0,200}?([\d]{1,2}\.[\d]{3},[\d]{2})',
-            r.text, re.I | re.S,
+            html, re.I | re.S,
         )
         if not m:
-            # Broader fallback: any 4-5 digit number with Turkish format ~5000-15000
-            m = re.search(r'\b([5-9]\.\d{3},\d{2}|1[0-5]\.\d{3},\d{2})\b', r.text)
+            m = re.search(r'\b([5-9]\.\d{3},\d{2}|1[0-5]\.\d{3},\d{2})\b', html)
         if m:
             price_24k = parse_try_price(m.group(1))
             if price_24k and 4_000 < price_24k < 20_000:
                 price_22k = round(price_24k * 0.916, 2)
-                log.info(f"  📈 Live gold: {fmt_price(price_24k)}/g (24k) → "
-                         f"{fmt_price(price_22k)}/g (22k)")
+                log.info(f"  📈 Live gold (24k × 0.916 fallback): "
+                         f"{fmt_price(price_24k)} → {fmt_price(price_22k)}/g")
                 return price_22k
+
     except Exception as e:
         log.debug(f"Gold price fetch failed: {e}")
     return None
