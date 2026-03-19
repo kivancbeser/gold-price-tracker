@@ -2340,7 +2340,8 @@ def compare(products: List[Product]) -> None:
 #  HTML OUTPUT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def generate_html(products: List[Product], live_gold_price: Optional[float] = None) -> str:
+def generate_html(products: List[Product], live_gold_price: Optional[float] = None,
+                  price_history: Optional[dict] = None) -> str:
     """Generate a self-contained HTML page with the price comparison results."""
     istanbul = timezone(timedelta(hours=3))
     now      = datetime.now(istanbul)
@@ -2473,6 +2474,98 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
           {f'<div class="card-footer bg-white">{savings}</div>' if savings else ""}
         </div>"""
 
+    # ── Fiyat geçmişi grafik bölümü ──────────────────────────────────────────
+    if price_history and len(price_history) >= 2:
+        # Tarihleri sırala, son 60 gün al
+        dates = sorted(price_history.keys())[-60:]
+        labels_js = json.dumps(dates)
+
+        # Her ağırlık için dataset + altın fiyatı referansı
+        weight_colors = {
+            "5g":  ("rgb(255,99,132)",  "rgba(255,99,132,.12)"),
+            "10g": ("rgb(54,162,235)",  "rgba(54,162,235,.12)"),
+            "15g": ("rgb(255,159,64)",  "rgba(255,159,64,.12)"),
+            "20g": ("rgb(75,192,192)",  "rgba(75,192,192,.12)"),
+        }
+        weight_labels = {"5g": "5g", "10g": "10g", "15g": "15g", "20g": "20g"}
+
+        datasets_js = "["
+        for w, (color, fill_color) in weight_colors.items():
+            pgr_values = [
+                price_history[d].get(w, {}).get("pgr") for d in dates
+            ]
+            datasets_js += f"""{{
+              label: 'En ucuz {weight_labels[w]} (TRY/g)',
+              data: {json.dumps(pgr_values)},
+              borderColor: '{color}', backgroundColor: '{fill_color}',
+              tension: 0.3, fill: false, spanGaps: true,
+              pointRadius: 3, pointHoverRadius: 6,
+            }},"""
+
+        # Altın fiyatı referans çizgisi
+        gold_values = [price_history[d].get("gold") for d in dates]
+        datasets_js += f"""{{
+          label: 'Kapalı Çarşı 22k (TRY/g)',
+          data: {json.dumps(gold_values)},
+          borderColor: 'rgb(212,175,55)', backgroundColor: 'rgba(212,175,55,.08)',
+          borderDash: [6,3], tension: 0.3, fill: false, spanGaps: true,
+          pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+        }}]"""
+
+        history_section = f"""
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header bg-dark text-white">
+      📊 <strong>Gram Fiyatı Geçmişi</strong>
+      <span class="badge bg-secondary ms-2">{len(dates)} gün</span>
+    </div>
+    <div class="card-body">
+      <canvas id="priceHistoryChart" style="max-height:380px;"></canvas>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+  (function() {{
+    const ctx = document.getElementById('priceHistoryChart');
+    new Chart(ctx, {{
+      type: 'line',
+      data: {{
+        labels: {labels_js},
+        datasets: {datasets_js}
+      }},
+      options: {{
+        responsive: true,
+        interaction: {{ mode: 'index', intersect: false }},
+        plugins: {{
+          legend: {{ position: 'bottom', labels: {{ boxWidth: 14, font: {{ size: 12 }} }} }},
+          tooltip: {{
+            callbacks: {{
+              label: ctx => {{
+                const v = ctx.parsed.y;
+                return v != null ? ` ${{ctx.dataset.label}}: ${{v.toLocaleString('tr-TR', {{minimumFractionDigits:2}})}} TRY` : ' —';
+              }}
+            }}
+          }}
+        }},
+        scales: {{
+          x: {{
+            ticks: {{ maxTicksLimit: 10, maxRotation: 30, font: {{ size: 11 }} }},
+            grid: {{ color: 'rgba(0,0,0,.06)' }}
+          }},
+          y: {{
+            ticks: {{
+              callback: v => v.toLocaleString('tr-TR') + ' ₺',
+              font: {{ size: 11 }}
+            }},
+            grid: {{ color: 'rgba(0,0,0,.06)' }}
+          }}
+        }}
+      }}
+    }});
+  }})();
+  </script>"""
+    else:
+        history_section = ""   # Yeterli veri yoksa grafik gösterme
+
     return f"""<!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -2560,6 +2653,9 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
   <!-- Per-weight sections -->
   {weight_sections}
 
+  <!-- Fiyat Geçmişi Grafikleri -->
+  {history_section}
+
 </div>
 
 <div class="footer">
@@ -2573,10 +2669,70 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 </html>"""
 
 
+PRICE_HISTORY_PATH = "docs/prices.json"
+PRICE_HISTORY_KEEP_DAYS = 90   # Kaç günlük veri saklanacak
+
+
+def load_price_history() -> dict:
+    """Mevcut fiyat geçmişini yükle, yoksa boş dict döndür."""
+    try:
+        with open(PRICE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_price_history(products: List[Product],
+                       live_gold_price: Optional[float] = None) -> dict:
+    """
+    Bugünün en iyi gram fiyatlarını prices.json'a ekle.
+    Yapı: { "2026-03-19": { "gold": 6033.85, "5g": {"pgr": 7116, "site": "N11"}, ... } }
+    90 günden eski kayıtlar temizlenir.
+    """
+    istanbul = timezone(timedelta(hours=3))
+    today    = datetime.now(istanbul).strftime("%Y-%m-%d")
+
+    history = load_price_history()
+
+    day_entry: dict = {}
+    if live_gold_price:
+        day_entry["gold"] = round(live_gold_price, 2)
+
+    for weight in WEIGHT_ORDER:
+        ok_items = [p for p in products if p.weight == weight and p.status == "ok" and p.price]
+        if not ok_items:
+            continue
+        best = min(ok_items, key=lambda x: x.price)
+        day_entry[weight] = {
+            "pgr":  round(best.price_pgr, 2),
+            "price": round(best.price, 2),
+            "site":  best.site,
+        }
+
+    history[today] = day_entry
+
+    # Eski kayıtları temizle
+    cutoff = (datetime.now(timezone(timedelta(hours=3))) -
+              timedelta(days=PRICE_HISTORY_KEEP_DAYS)).strftime("%Y-%m-%d")
+    history = {d: v for d, v in history.items() if d >= cutoff}
+
+    # Tarihe göre sırala
+    history = dict(sorted(history.items()))
+
+    os.makedirs(os.path.dirname(PRICE_HISTORY_PATH) or ".", exist_ok=True)
+    with open(PRICE_HISTORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+    log.info(f"  📊 Fiyat geçmişi güncellendi → {PRICE_HISTORY_PATH} ({len(history)} gün)")
+    return history
+
+
 def save_html(products: List[Product], path: str,
               live_gold_price: Optional[float] = None) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    html = generate_html(products, live_gold_price)
+    # Fiyat geçmişini kaydet ve HTML'e göm
+    history = save_price_history(products, live_gold_price)
+    html = generate_html(products, live_gold_price, price_history=history)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     log.info(f"  💾 HTML saved → {path}")

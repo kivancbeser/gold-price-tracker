@@ -21,6 +21,7 @@ debug_*.html
 
 # Auto-generated — GitHub Actions tarafından commit edilir, local çalışmalar ignore edilir
 docs/index.html
+docs/prices.json
 
 # Virtual environments
 .venv/
