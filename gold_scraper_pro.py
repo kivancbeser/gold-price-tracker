@@ -2346,11 +2346,17 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
     now      = datetime.now(istanbul)
     ts       = now.strftime("%d %B %Y, %H:%M (Istanbul)")
 
-    gold_info = (
-        f'<span class="badge bg-warning text-dark fs-6 ms-2">'
-        f'📈 22k: {fmt_price(live_gold_price)}/g</span>'
-        if live_gold_price else ""
-    )
+    # Hero bölümünde gösterilecek altın fiyatı kutusu
+    if live_gold_price:
+        gold_hero_block = f"""
+    <div class="gold-price-hero mt-3 d-inline-flex align-items-center gap-3 px-4 py-2 rounded-3">
+      <div class="text-center">
+        <div style="font-size:.75rem;opacity:.8;letter-spacing:.05em;">KAPALI ÇARŞI · 22 AYAR GRAM ALTIN</div>
+        <div style="font-size:1.6rem;font-weight:800;letter-spacing:.02em;">{fmt_price(live_gold_price)} <span style="font-size:1rem;font-weight:400;">TRY/g</span></div>
+      </div>
+    </div>"""
+    else:
+        gold_hero_block = ""
 
     def _row_class(p: Product, best: Optional[Product], worst: Optional[Product]) -> str:
         if best and p.price == best.price:   return "table-success fw-bold"
@@ -2377,6 +2383,30 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
         grams = WEIGHT_GRAMS.get(weight, 0)
         best  = min(ok_items, key=lambda x: x.price, default=None)
         worst = max(ok_items, key=lambda x: x.price, default=None)
+
+        # Kapalı çarşı referans fiyatı (o ağırlık için)
+        if live_gold_price and grams:
+            market_total = live_gold_price * grams
+            if best and best.price:
+                diff_pct = (best.price - market_total) / market_total * 100
+                diff_sign = "+" if diff_pct >= 0 else ""
+                diff_color = "text-danger" if diff_pct > 3 else "text-success"
+                market_badge = (
+                    f'<span class="badge bg-warning text-dark me-1" '
+                    f'title="Kapalı Çarşı × {grams}g = {fmt_price(market_total)}">'
+                    f'🏪 ~{fmt_price(market_total)}</span>'
+                    f'<span class="badge bg-light border {diff_color}" '
+                    f'title="En ucuz teklifin kapalı çarşıya göre farkı">'
+                    f'{diff_sign}{diff_pct:.1f}%</span>'
+                )
+            else:
+                market_badge = (
+                    f'<span class="badge bg-warning text-dark" '
+                    f'title="Kapalı Çarşı × {grams}g">'
+                    f'🏪 ~{fmt_price(market_total)}</span>'
+                )
+        else:
+            market_badge = ""
 
         rows_html = ""
         for p in sorted(ok_items, key=lambda x: x.price or 0):
@@ -2419,8 +2449,8 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 
         weight_sections += f"""
         <div class="card mb-4 shadow-sm">
-          <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-            <span>⚖️ <strong>{weight}</strong> &nbsp;·&nbsp; {grams}g · 22 Ayar · 916‰</span>
+          <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-1">
+            <span>⚖️ <strong>{weight}</strong> &nbsp;·&nbsp; {grams}g · 22 Ayar · 916‰ &nbsp; {market_badge}</span>
             {"<span class='badge bg-success'>✓ " + str(len(ok_items)) + " ürün</span>" if ok_items else "<span class='badge bg-danger'>Ürün bulunamadı</span>"}
           </div>
           <div class="card-body p-0">
@@ -2464,6 +2494,8 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
              color: white; padding: 2rem 0 1.5rem; }}
     .hero h1 {{ font-size: 1.5rem; font-weight: 700; }}
     .updated-badge {{ font-size: .82rem; opacity: .85; }}
+    .gold-price-hero {{ background: linear-gradient(90deg, #b8860b, #ffd700, #b8860b);
+                        color: #1a1a0a; font-weight: 700; box-shadow: 0 2px 8px rgba(255,215,0,.4); }}
     .table td, .table th {{ vertical-align: middle; }}
     .table-success td {{ color: #0a3622 !important; }}
     a {{ text-decoration: none; }}
@@ -2491,12 +2523,13 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
   <div class="container">
     <h1>💛 22 Ayar Altın Bilezik Fiyat Karşılaştırma</h1>
     <p class="updated-badge mb-1">
-      🕐 Son güncelleme: <strong>{ts}</strong> {gold_info}
+      🕐 Son güncelleme: <strong>{ts}</strong>
     </p>
     <p class="updated-badge mb-0 opacity-75">
       Hepsiburada · Amazon TR · N11 · Idefix · Trendyol &nbsp;|&nbsp;
       Sadece stokta olan ürünler gösterilmektedir
     </p>
+    {gold_hero_block}
   </div>
 </div>
 
