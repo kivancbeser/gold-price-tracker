@@ -1,9 +1,9 @@
 {
   "2026-03-20": {
-    "gold": 6052.78,
+    "gold": 6092.53,
     "5g": {
-      "pgr": 7220.24,
-      "price": 36101.19,
+      "pgr": 7260.73,
+      "price": 36303.64,
       "site": "N11"
     },
     "10g": {
@@ -12,14 +12,14 @@
       "site": "Trendyol"
     },
     "15g": {
-      "pgr": 7228.24,
-      "price": 108423.59,
-      "site": "Trendyol"
+      "pgr": 7361.58,
+      "price": 110423.73,
+      "site": "Hepsiburada"
     },
     "20g": {
-      "pgr": 7319.55,
-      "price": 146391.0,
-      "site": "Trendyol"
+      "pgr": 7360.13,
+      "price": 147202.66,
+      "site": "Hepsiburada"
     }
   }
 }
