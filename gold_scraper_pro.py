@@ -94,6 +94,18 @@ log = logging.getLogger("gold_scraper")
 
 PRODUCT_URLS: Dict[str, List[dict]] = {
 
+    # ── 1 GRAM — 24 AYAR GRAM ALTIN ───────────────────────────────────────────
+    "1g": [
+        # Hepsiburada
+        {"url": "https://www.hepsiburada.com/kulce-altin-1-gram-24-ayar-pm-HBC000012R11L",                          "site": "Hepsiburada"},
+        # N11
+        {"url": "https://www.n11.com/urun/victoria-gold-1-adet-1-gr-24-ayar-995-altin-nadir-yada-sar-61732071",     "site": "N11"},
+        # Trendyol
+        {"url": "https://www.trendyol.com/ahlatci/24-ayar-1g-altin-p-4422282",                                     "site": "Trendyol"},
+        # Idefix
+        {"url": "https://www.idefix.com/altin-anne-1-gr-24-ayar-ard-gram-altin-p-10269603",                         "site": "Idefix"},
+    ],
+
     # ── 5 GRAM ────────────────────────────────────────────────────────────────
     "5g": [
         # Hepsiburada
@@ -180,14 +192,20 @@ MAX_RESULTS_PER_SITE = 3
 
 # Arama anahtar kelimeleri (her ağırlık için)
 SEARCH_QUERIES: Dict[str, str] = {
+    "1g":  "24 ayar 1 gram altin",   # gram altın — arama yerine hardcoded URL'ler kullanılır
     "5g":  "22 ayar 5 gram bilezik",
     "10g": "22 ayar 10 gram bilezik",
     "15g": "22 ayar 15 gram bilezik",
     "20g": "22 ayar 20 gram bilezik",
 }
 
+# Bu ağırlıklar için arama yapılmaz, sadece hardcoded PRODUCT_URLS kullanılır.
+# (Bilezik arama kategorileri gram altın sayfalarını kapsamıyor)
+SKIP_SEARCH_WEIGHTS = {"1g"}
+
 # Ağırlık doğrulama — arama sonuçlarında yanlış gram gelmesin diye
 WEIGHT_PATTERNS: Dict[str, str] = {
+    "1g":  r'(?<!\d)1\s*gr',   # "1 gr" — "10g", "11g" ile karışmasın
     "5g":  r'\b5\s*gr',
     "10g": r'\b10\s*gr',
     "15g": r'\b15\s*gr',
@@ -220,7 +238,7 @@ SANITY_RATIO           : float = 0.95   # products priced below 95% of market ar
 MAX_SANITY_RATIO       : float = 2.50   # products priced above 250% of market are rejected
 
 # Weight as integer grams — used for price-per-gram calculation
-WEIGHT_GRAMS: Dict[str, int] = {"5g": 5, "10g": 10, "15g": 15, "20g": 20}
+WEIGHT_GRAMS: Dict[str, int] = {"1g": 1, "5g": 5, "10g": 10, "15g": 15, "20g": 20}
 
 # ── User-Agent pool (desktop Chrome / Edge / Firefox) ─────────────────────────
 USER_AGENTS: List[str] = [
@@ -924,15 +942,23 @@ def fetch_live_gold_price_try() -> Optional[float]:
         r.raise_for_status()
         html = r.text
 
-        # ── Öncelik 1: "22 Ayar" etiketinin hemen yanındaki fiyat ───────────
+        # ── Öncelik 1: "22 Ayar" satırındaki SATIŞ fiyatı ───────────────────
+        # Bigpara tablosu: 22 Ayar | Alış | Satış
+        # İki fiyat yakalanır, büyük olan satış fiyatıdır.
         m22 = re.search(
-            r'22\s*[Aa]yar[^<]{0,300}?([\d]{1,2}\.[\d]{3},[\d]{2})',
+            r'22\s*[Aa]yar[^<]{0,400}?'
+            r'([\d]{1,2}\.[\d]{3},[\d]{2})'   # 1. fiyat (alış)
+            r'[^<]{0,150}?'
+            r'([\d]{1,2}\.[\d]{3},[\d]{2})',   # 2. fiyat (satış)
             html, re.S,
         )
         if m22:
-            price = parse_try_price(m22.group(1))
-            if price and 4_000 < price < 20_000:
-                log.info(f"  📈 22 Ayar gram altın (bigpara doğrudan): {fmt_price(price)}/g")
+            p1 = parse_try_price(m22.group(1))
+            p2 = parse_try_price(m22.group(2))
+            price = max(v for v in [p1, p2] if v and 4_000 < v < 20_000) \
+                    if any(v and 4_000 < v < 20_000 for v in [p1, p2]) else None
+            if price:
+                log.info(f"  📈 22 Ayar gram altın satış (bigpara): {fmt_price(price)}/g")
                 return round(price, 2)
 
         # ── Fallback: 24 ayar × 0.916 ────────────────────────────────────────
@@ -1030,7 +1056,15 @@ def parse_hepsiburada(html: str, url: str, weight: str,
     name = _h1(html)
     js_data = js_data or {}
 
-    if _oos(html):
+    # pm- (product model) sayfalarında birden fazla satıcı satırı olur.
+    # Bazı satıcılar "satışta değil" yazsa da sayfada "Sepete Ekle" butonu varsa
+    # ürün satışta demektir — _oos() tüm HTML'e baktığı için false positive verebilir.
+    is_pm_page = "-pm-" in url
+    has_add_to_cart = bool(re.search(
+        r'[Ss]epete\s+[Ee]kle|add-to-cart|AddToCart|sepeteekle',
+        html, re.I,
+    ))
+    if _oos(html) and not (is_pm_page and has_add_to_cart):
         return Product(site=site, name=name, weight=weight, price=None,
                        url=url, status="out_of_stock")
 
@@ -1409,15 +1443,36 @@ def parse_idefix(html: str, url: str, weight: str) -> Product:
                        url=url, status="out_of_stock")
 
     price: Optional[float] = None
+
+    # ── Priority 1: "Sepette" (cart) price — lower blue price shown at checkout ──
+    # e.g. "Sepette 7.669,76 TL" or class="basket-price" / "cart-price"
     for pat in [
-        r'class="[^"]*(?:price|fiyat|amount)[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
-        r'itemprop="price"\s+content="([^"]+)"',
+        r'[Ss]epette\s*([\d]{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)\s*(?:TL|₺)',
+        r'class="[^"]*(?:basket|cart|sepet)[^"]*price[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
+        r'class="[^"]*price[^"]*(?:basket|cart|sepet)[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
+        r'"discountedPrice"\s*:\s*([\d.]+)',
+        r'"campaignPrice"\s*:\s*([\d.]+)',
     ]:
         mm = re.search(pat, html, re.I)
         if mm:
             price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
             if price:
+                log.debug(f"  Idefix: sepette/kampanya fiyatı: {price}")
                 break
+
+    # ── Priority 2: Regular price patterns ────────────────────────────────────
+    if not price:
+        for pat in [
+            r'itemprop="price"\s+content="([^"]+)"',
+            r'"currentPrice"\s*:\s*([\d.]+)',
+            r'"price"\s*:\s*([\d.]+)',
+            r'class="[^"]*(?:price|fiyat|amount)[^"]*"[^>]*>\s*([\d.,\s₺TL]+)',
+        ]:
+            mm = re.search(pat, html, re.I)
+            if mm:
+                price = sanity_check(parse_try_price(mm.group(1).strip()), weight)
+                if price:
+                    break
 
     if not price:
         price = sanity_check(_json_ld_price(html), weight) or \
@@ -1986,6 +2041,9 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
             log.info("🔍 SEARCH MODE aktif — arama sayfaları taranıyor…\n")
             dynamic_map: Dict[str, List[dict]] = {w: [] for w in WEIGHT_GRAMS}
             for weight in WEIGHT_GRAMS:
+                if weight in SKIP_SEARCH_WEIGHTS:
+                    log.info(f"  ⏭ [{weight}] Arama atlandı (SKIP_SEARCH_WEIGHTS) — sadece hardcoded URL'ler kullanılacak")
+                    continue
                 discovered = await discover_urls_for_weight(browser, weight)
                 for site, items in discovered.items():
                     for item in items:
@@ -2191,7 +2249,7 @@ STATUS_LABEL = {
     "error":           "FETCH ERROR",
 }
 
-WEIGHT_ORDER = ["5g", "10g", "15g", "20g"]
+WEIGHT_ORDER = ["1g", "5g", "10g", "15g", "20g"]
 
 
 def compare(products: List[Product]) -> None:
@@ -2222,7 +2280,9 @@ def compare(products: List[Product]) -> None:
         best  = min(ok_items, key=lambda x: x.price, default=None)
         worst = max(ok_items, key=lambda x: x.price, default=None)
 
-        print(f"\n  ⚖️   Weight: {weight}  ({grams}g · 22 ayar · 916‰ purity)")
+        purity_label = "24 ayar" if weight == "1g" else "22 ayar"
+        category_label = "💎 Gram Altın" if weight == "1g" else "⚖️  Bilezik"
+        print(f"\n  {category_label}   Weight: {weight}  ({grams}g · {purity_label} purity)")
         print("  " + "─" * 98)
 
         if not ok_items:
@@ -2388,9 +2448,33 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
         return ""
 
     weight_sections = ""
-    best_deals_rows = ""
+    best_deals_rows = ""          # artık kullanılmıyor — aşağıda gram_altin/bilezik ayrı
+    gram_altin_deals: list = []   # [{"weight", "site", "pgr", "price", "url"}]
+    bilezik_deals:    list = []
+
+    # Section header separators
+    gram_altin_header = """
+        <div class="d-flex align-items-center gap-2 mb-3 mt-1">
+          <span style="font-size:1.4rem;">💎</span>
+          <h5 class="mb-0 fw-bold text-warning" style="letter-spacing:.03em;">GRAM ALTIN</h5>
+          <span class="badge bg-warning text-dark">24 Ayar</span>
+          <div class="flex-grow-1 border-bottom border-warning opacity-50"></div>
+        </div>"""
+    bilezik_header = """
+        <div class="d-flex align-items-center gap-2 mb-3 mt-4">
+          <span style="font-size:1.4rem;">📿</span>
+          <h5 class="mb-0 fw-bold text-info" style="letter-spacing:.03em;">BİLEZİK</h5>
+          <span class="badge bg-info text-dark">22 Ayar</span>
+          <div class="flex-grow-1 border-bottom border-info opacity-50"></div>
+        </div>"""
 
     for weight in WEIGHT_ORDER:
+        # Section headers
+        if weight == "1g":
+            weight_sections += gram_altin_header
+        elif weight == "5g":
+            weight_sections += bilezik_header
+
         group     = [p for p in products if p.weight == weight]
         ok_items  = [p for p in group if p.status == "ok" and p.price]
         oos_items = [p for p in group if p.status == "out_of_stock"]
@@ -2400,8 +2484,12 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
         best  = min(ok_items, key=lambda x: x.price, default=None)
         worst = max(ok_items, key=lambda x: x.price, default=None)
 
+        # 1g gram altın: purity label differs from bilezik
+        is_gram_altin = (weight == "1g")
+
         # Kapalı çarşı referans fiyatı (o ağırlık için)
-        if live_gold_price and grams:
+        # 1g gram altın için referans gösterilmez — live_gold_price 22 ayar, 1g ürünler 24 ayar
+        if live_gold_price and grams and not is_gram_altin:
             market_total = live_gold_price * grams
             if best and best.price:
                 diff_pct = (best.price - market_total) / market_total * 100
@@ -2428,16 +2516,20 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
         for p in sorted(ok_items, key=lambda x: x.price or 0):
             rc   = _row_class(p, best, worst)
             note = _note(p, best, worst)
-            seller_sub = (f'<br><small class="text-muted d-md-none">{p.seller}</small>'
+            # Mobilde satıcı adını ürün adının altında göster, masaüstünde ayrı kolon
+            seller_sub = (f'<br><small class="text-muted d-md-none" style="font-size:.75rem">{p.seller}</small>'
                           if p.seller else "")
+            # Mobilde gram fiyatını ürün adının altında küçük göster
+            pgr_sub = (f'<br><small class="text-muted d-sm-none" style="font-size:.75rem">'
+                       f'{fmt_price(p.price_pgr)}/g</small>')
             rows_html += f"""
               <tr class="{rc}">
                 <td class="text-nowrap small">{p.site}</td>
-                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:55]}</a>{seller_sub}</td>
-                <td class="d-none d-md-table-cell">{p.seller or "—"}</td>
+                <td><a href="{p.url}" target="_blank" rel="noopener">{p.name[:50]}</a>{seller_sub}{pgr_sub}</td>
+                <td class="d-none d-md-table-cell small">{p.seller or "—"}</td>
                 <td class="text-end fw-bold text-nowrap">{fmt_price(p.price)}</td>
                 <td class="text-end text-nowrap d-none d-sm-table-cell">{fmt_price(p.price_pgr)}/g</td>
-                <td class="text-nowrap">{note}</td>
+                <td class="text-nowrap small">{note}</td>
               </tr>"""
 
         # Stokta yok / fiyat alınamadı ürünler tabloda gösterilmez — sadece ok olanlar listelenir
@@ -2451,22 +2543,37 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                            f'💰 En ucuz: <strong>{best.site}</strong> — '
                            f'{fmt_price(best.price)} ({fmt_price(best.price_pgr)}/g) &nbsp;|&nbsp; '
                            f'En pahalıya göre <strong>{fmt_price(diff)} ({pct:.1f}%)</strong> tasarruf</div>')
-            best_deals_rows += f"""
-              <tr>
-                <td class="text-nowrap"><strong>{weight}</strong></td>
-                <td class="text-nowrap small">{best.site}</td>
-                <td class="d-none d-md-table-cell">{best.seller or "—"}</td>
-                <td class="text-end fw-bold text-success text-nowrap">{fmt_price(best.price)}</td>
-                <td class="text-end text-nowrap d-none d-sm-table-cell">{fmt_price(best.price_pgr)}/g</td>
-                <td><a href="{best.url}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary">🔗</a></td>
-              </tr>"""
+            deal = {"weight": weight, "site": best.site,
+                    "pgr": best.price_pgr, "price": best.price, "url": best.url}
+            if is_gram_altin:
+                gram_altin_deals.append(deal)
+            else:
+                bilezik_deals.append(deal)
         else:
             savings = ""
 
+        # Card styling differs for gram altın vs bilezik
+        if is_gram_altin:
+            card_icon     = "💎"
+            card_purity   = "24 Ayar"
+            card_bg       = "bg-warning text-dark"
+            card_category = "Gram Altın"
+        else:
+            card_icon     = "⚖️"
+            card_purity   = "22 Ayar"
+            card_bg       = "bg-dark text-white"
+            card_category = "Bilezik"
+
         weight_sections += f"""
         <div class="card mb-4 shadow-sm">
-          <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-1">
-            <span>⚖️ <strong>{weight}</strong> &nbsp;·&nbsp; {grams}g · 22 Ayar · 916‰ &nbsp; {market_badge}</span>
+          <div class="card-header {card_bg} d-flex justify-content-between align-items-center flex-wrap gap-1">
+            <span class="d-flex align-items-center gap-2 flex-wrap">
+              {card_icon} <strong>{weight}</strong>
+              <span class="opacity-75 small">{card_category}</span>
+              <span class="opacity-50">·</span>
+              <span class="small">{card_purity}</span>
+              {(' <span class="opacity-50">·</span> ' + market_badge) if market_badge else ''}
+            </span>
             {"<span class='badge bg-success'>✓ " + str(len(ok_items)) + " ürün</span>" if ok_items else "<span class='badge bg-danger'>Ürün bulunamadı</span>"}
           </div>
           <div class="card-body p-0">
@@ -2477,8 +2584,8 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                   <th class="small">Site</th>
                   <th>Ürün</th>
                   <th class="d-none d-md-table-cell">Satıcı</th>
-                  <th class="text-end">Fiyat (TRY)</th>
-                  <th class="text-end d-none d-sm-table-cell">Gram Fiyatı</th>
+                  <th class="text-end">Fiyat</th>
+                  <th class="text-end d-none d-sm-table-cell">g/Fiyat</th>
                   <th>Not</th>
                 </tr>
               </thead>
@@ -2497,12 +2604,13 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 
         # Her ağırlık için dataset + altın fiyatı referansı
         weight_colors = {
+            "1g":  ("rgb(212,175,55)",  "rgba(212,175,55,.15)"),   # gold — gram altın
             "5g":  ("rgb(255,99,132)",  "rgba(255,99,132,.12)"),
             "10g": ("rgb(54,162,235)",  "rgba(54,162,235,.12)"),
             "15g": ("rgb(255,159,64)",  "rgba(255,159,64,.12)"),
             "20g": ("rgb(75,192,192)",  "rgba(75,192,192,.12)"),
         }
-        weight_labels = {"5g": "5g", "10g": "10g", "15g": "15g", "20g": "20g"}
+        weight_labels = {"1g": "1g (gram altın)", "5g": "5g", "10g": "10g", "15g": "15g", "20g": "20g"}
 
         datasets_js = "["
         for w, (color, fill_color) in weight_colors.items():
@@ -2581,6 +2689,47 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
     else:
         history_section = ""   # Yeterli veri yoksa grafik gösterme
 
+    # ── En İyi Fırsatlar özeti (compact two-column) ───────────────────────────
+    def _deal_row(d: dict, badge_cls: str, btn_cls: str) -> str:
+        return (
+            '<div class="d-flex align-items-center justify-content-between'
+            ' py-1 border-bottom gap-2">'
+            f'<span class="badge {badge_cls} text-nowrap">{d["weight"]}</span>'
+            f'<span class="small text-muted flex-grow-1">{d["site"]}</span>'
+            f'<span class="fw-bold small text-nowrap">{fmt_price(d["pgr"])}/g</span>'
+            f'<a href="{d["url"]}" target="_blank" rel="noopener"'
+            f' class="btn btn-sm {btn_cls} py-0 px-1 text-nowrap">&#128279;</a>'
+            '</div>'
+        )
+
+    ga_rows  = "".join(_deal_row(d, "bg-warning text-dark", "btn-outline-warning")
+                       for d in gram_altin_deals) or '<span class="text-muted small">Veri yok</span>'
+    bil_rows = "".join(_deal_row(d, "bg-secondary", "btn-outline-secondary")
+                       for d in bilezik_deals) or '<span class="text-muted small">Veri yok</span>'
+
+    _best_deals_html = f"""
+  <div class="card mb-4 border-0 shadow-sm">
+    <div class="card-header bg-dark text-white fw-bold">&#9989; En İyi Fırsatlar</div>
+    <div class="card-body py-2">
+      <div class="row g-3">
+        <div class="col-12 col-md-4">
+          <div class="d-flex align-items-center gap-1 mb-2">
+            <span>&#128142;</span>
+            <span class="fw-semibold small text-warning">GRAM ALTIN</span>
+          </div>
+          {ga_rows}
+        </div>
+        <div class="col-12 col-md-8">
+          <div class="d-flex align-items-center gap-1 mb-2">
+            <span>&#128317;</span>
+            <span class="fw-semibold small text-info">BİLEZİK</span>
+          </div>
+          {bil_rows}
+        </div>
+      </div>
+    </div>
+  </div>"""
+
     return f"""<!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -2643,27 +2792,8 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 
 <div class="container mt-4">
 
-  <!-- Best Deals Summary -->
-  <div class="card mb-4 border-warning shadow">
-    <div class="card-header bg-warning text-dark fw-bold">✅ En İyi Fırsatlar Özeti</div>
-    <div class="card-body p-0">
-      <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <thead class="table-light">
-          <tr>
-            <th>Ağırlık</th>
-            <th class="small">Site</th>
-            <th class="d-none d-md-table-cell">Satıcı</th>
-            <th class="text-end">En Düşük Fiyat</th>
-            <th class="text-end d-none d-sm-table-cell">Gram Fiyatı</th>
-            <th>Link</th>
-          </tr>
-        </thead>
-        <tbody>{best_deals_rows}</tbody>
-      </table>
-      </div>
-    </div>
-  </div>
+  <!-- Best Deals Summary (rendered below) -->
+  {_best_deals_html}
 
   <!-- Per-weight sections -->
   {weight_sections}
