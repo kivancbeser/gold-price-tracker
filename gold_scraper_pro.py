@@ -96,7 +96,9 @@ PRODUCT_URLS: Dict[str, List[dict]] = {
 
     # ── 1 GRAM — 24 AYAR GRAM ALTIN ───────────────────────────────────────────
     "1g": [
-        # Hepsiburada
+        # Hepsiburada — kategori sayfasından en ucuz ürünleri otomatik keşfet
+        {"url": "https://www.hepsiburada.com/1-gram-altin-c-60008293", "site": "Hepsiburada", "hb_category": True},
+        # Hepsiburada — Ahlatcı pm- sayfası (yukarıdaki kategori boş gelirse yedek)
         {"url": "https://www.hepsiburada.com/kulce-altin-1-gram-24-ayar-pm-HBC000012R11L",                          "site": "Hepsiburada"},
         # N11
         {"url": "https://www.n11.com/urun/victoria-gold-1-adet-1-gr-24-ayar-995-altin-nadir-yada-sar-61732071",     "site": "N11"},
@@ -205,7 +207,7 @@ SKIP_SEARCH_WEIGHTS = {"1g"}
 
 # Ağırlık doğrulama — arama sonuçlarında yanlış gram gelmesin diye
 WEIGHT_PATTERNS: Dict[str, str] = {
-    "1g":  r'(?<!\d)1\s*gr',   # "1 gr" — "10g", "11g" ile karışmasın
+    "1g":  r'(?<!\d)1[\s\-]?gr(?:am)?',  # "1 gr", "1gr", "1-gram", "1gram" — "10g" ile karışmasın
     "5g":  r'\b5\s*gr',
     "10g": r'\b10\s*gr',
     "15g": r'\b15\s*gr',
@@ -2017,7 +2019,7 @@ async def fetch_page_pw(browser: Browser, url: str) -> Tuple[Optional[str], Opti
         await ctx.close()
 
 
-async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
+async def scrape_all(url_map: Dict[str, List[dict]], skip_search: bool = False) -> List[Product]:
     if not PW_OK:
         log.error("Playwright not installed. Run: pip3 install playwright && python3 -m playwright install chromium")
         return []
@@ -2037,7 +2039,7 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
         )
 
         # ── SEARCH MODE: arama sayfalarından dinamik URL keşfi ────────────────
-        if SEARCH_MODE:
+        if SEARCH_MODE and not skip_search:
             log.info("🔍 SEARCH MODE aktif — arama sayfaları taranıyor…\n")
             dynamic_map: Dict[str, List[dict]] = {w: [] for w in WEIGHT_GRAMS}
             for weight in WEIGHT_GRAMS:
@@ -2066,6 +2068,34 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
             log.info(f"\n✅ Search tamamlandı — toplam {total_dynamic} ürün URL'si bulundu\n")
         else:
             active_map = url_map
+
+        # ── HB kategori URL'lerini genişlet — pm- ürün URL'lerine çevir ─────────
+        # PRODUCT_URLS'de "hb_category": True olan girişler kategori/arama sayfasıdır.
+        # Bu sayfaları yükleyip içindeki pm- URL'lerini çıkarırız.
+        for weight in list(active_map.keys()):
+            expanded: List[dict] = []
+            for entry in active_map[weight]:
+                if not entry.get("hb_category"):
+                    expanded.append(entry)
+                    continue
+                cat_url = entry["url"]
+                log.info(f"  🔍 [{weight}] HB kategori sayfası taranıyor → {cat_url[:70]}")
+                try:
+                    cat_html, _ = await fetch_page_pw(browser, cat_url)
+                    if cat_html:
+                        cat_items = parse_search_hb(cat_html, weight)
+                        if cat_items:
+                            log.info(f"  ✓ [{weight}] HB kategori: {len(cat_items)} ürün URL'si bulundu")
+                            for item in cat_items[:MAX_RESULTS_PER_SITE]:
+                                expanded.append({"url": item["url"], "site": item.get("site", "Hepsiburada")})
+                        else:
+                            log.warning(f"  ⚠ [{weight}] HB kategori: ürün bulunamadı — pm- URL yedek olarak kalacak")
+                    else:
+                        log.warning(f"  ⚠ [{weight}] HB kategori: sayfa yüklenemedi")
+                except Exception as cat_e:
+                    log.warning(f"  ✗ [{weight}] HB kategori hatası: {cat_e}")
+                random_delay()
+            active_map[weight] = expanded
 
         # ── URL listesini düz görev listesine çevir ───────────────────────────
         tasks: List[tuple] = []
@@ -2116,7 +2146,10 @@ async def scrape_all(url_map: Dict[str, List[dict]]) -> List[Product]:
 
             # ── HB fallback cascade ───────────────────────────────────────────
             # Sıra: ScraperAPI (residential IP) → JSON API → curl_cffi/requests
-            if product.status in ("price_not_found", "error") and "hepsiburada.com" in domain:
+            # pm- sayfalar için: OOS da dahil — Playwright bazı satıcıları OOS gösterebilir
+            # ama JSON API gerçek stok/fiyat verir.
+            _hb_pm_false_oos = (product.status == "out_of_stock" and "-pm-" in url)
+            if (product.status in ("price_not_found", "error") or _hb_pm_false_oos) and "hepsiburada.com" in domain:
 
                 # Fallback 1: ScraperAPI — residential IP, bypasses Azure block
                 # Requires SCRAPERAPI_KEY env var / GitHub Secret
@@ -2543,7 +2576,7 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
                            f'💰 En ucuz: <strong>{best.site}</strong> — '
                            f'{fmt_price(best.price)} ({fmt_price(best.price_pgr)}/g) &nbsp;|&nbsp; '
                            f'En pahalıya göre <strong>{fmt_price(diff)} ({pct:.1f}%)</strong> tasarruf</div>')
-            deal = {"weight": weight, "site": best.site,
+            deal = {"weight": weight, "site": best.site, "seller": best.seller or "—",
                     "pgr": best.price_pgr, "price": best.price, "url": best.url}
             if is_gram_altin:
                 gram_altin_deals.append(deal)
@@ -2689,48 +2722,49 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
     else:
         history_section = ""   # Yeterli veri yoksa grafik gösterme
 
-    # ── En İyi Fırsatlar özeti (compact two-column) ───────────────────────────
-    def _deal_row(d: dict, badge_cls: str, btn_cls: str) -> str:
+    # ── En İyi Fırsatlar özeti — detay tablosuyla aynı yapı ──────────────────
+    def _deal_tr(d: dict, weight_bg: str) -> str:
         return (
-            '<div class="d-flex align-items-center justify-content-between'
-            ' py-1 border-bottom gap-2">'
-            f'<span class="badge {badge_cls} text-nowrap">{d["weight"]}</span>'
-            f'<span class="small text-muted flex-grow-1">{d["site"]}</span>'
-            f'<span class="fw-bold small text-nowrap">{fmt_price(d["pgr"])}/g</span>'
-            f'<a href="{d["url"]}" target="_blank" rel="noopener"'
-            f' class="btn btn-sm {btn_cls} py-0 px-1 text-nowrap">&#128279;</a>'
-            '</div>'
+            f'<tr>'
+            f'<td class="text-nowrap"><span class="badge {weight_bg}">{d["weight"]}</span></td>'
+            f'<td class="text-nowrap small">{d["site"]}</td>'
+            f'<td class="text-nowrap small d-none d-md-table-cell">{d.get("seller","—")}</td>'
+            f'<td class="text-nowrap fw-bold text-success">{fmt_price(d["price"])}</td>'
+            f'<td class="text-nowrap small">{fmt_price(d["pgr"])}/g</td>'
+            f'<td><a href="{d["url"]}" target="_blank" rel="noopener" '
+            f'class="btn btn-sm btn-outline-secondary py-0 px-2">&#128279;</a></td>'
+            f'</tr>'
         )
 
-    ga_rows  = "".join(_deal_row(d, "bg-warning text-dark", "btn-outline-warning")
-                       for d in gram_altin_deals) or '<span class="text-muted small">Veri yok</span>'
-    bil_all  = [_deal_row(d, "bg-secondary", "btn-outline-secondary") for d in bilezik_deals]
-    mid = (len(bil_all) + 1) // 2
-    bil_rows_left  = "".join(bil_all[:mid])  or '<span class="text-muted small">Veri yok</span>'
-    bil_rows_right = "".join(bil_all[mid:]) or ""
+    ga_rows  = "".join(_deal_tr(d, "bg-warning text-dark") for d in gram_altin_deals)
+    bil_rows = "".join(_deal_tr(d, "bg-dark")              for d in bilezik_deals)
+
+    def _section_row(label: str) -> str:
+        return (f'<tr class="table-secondary">'
+                f'<td colspan="6" class="small fw-semibold py-1 px-2">{label}</td>'
+                f'</tr>')
 
     _best_deals_html = f"""
-  <div class="card mb-4 border-0 shadow-sm">
-    <div class="card-header bg-dark text-white fw-bold py-2">&#9989; En İyi Fırsatlar</div>
-    <div class="card-body p-2 p-md-3">
-      <div class="row g-2">
-        <div class="col-12 col-md-4 border-end-md">
-          <div class="d-flex align-items-center gap-1 mb-1">
-            <span>&#128142;</span>
-            <span class="fw-semibold small text-warning" style="letter-spacing:.03em">GRAM ALTIN</span>
-          </div>
-          {ga_rows}
-        </div>
-        <div class="col-12 col-md-8">
-          <div class="d-flex align-items-center gap-1 mb-1">
-            <span>&#128317;</span>
-            <span class="fw-semibold small text-info" style="letter-spacing:.03em">BİLEZİK</span>
-          </div>
-          <div class="row g-0">
-            <div class="col-12 col-sm-6">{bil_rows_left}</div>
-            <div class="col-12 col-sm-6">{bil_rows_right}</div>
-          </div>
-        </div>
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header bg-dark text-white fw-bold">&#9989; En İyi Fırsatlar</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th class="text-nowrap">Ağırlık</th>
+            <th class="text-nowrap small">Site</th>
+            <th class="text-nowrap small d-none d-md-table-cell">Satıcı</th>
+            <th class="text-nowrap">En Düşük Fiyat</th>
+            <th class="text-nowrap small">Gram Fiyatı</th>
+            <th>Link</th>
+          </tr>
+        </thead>
+        <tbody>
+          {_section_row("&#128142; Gram Alt&#305;n") + ga_rows if gram_altin_deals else ""}
+          {_section_row("&#128317; Bilezik")         + bil_rows if bilezik_deals   else ""}
+        </tbody>
+      </table>
       </div>
     </div>
   </div>"""
@@ -2941,7 +2975,17 @@ async def _main(args: argparse.Namespace) -> None:
               f"min={fmt_price(MIN_PRICE_PER_GRAM_TRY)}/g  max={fmt_price(MAX_PRICE_PER_GRAM_TRY)}/g")
     print()
 
-    products = await scrape_all(PRODUCT_URLS)
+    # --weights filtresi: sadece istenen ağırlıkları tara, search'ü atla
+    active_urls = PRODUCT_URLS
+    if args.weights:
+        valid = [w for w in args.weights if w in PRODUCT_URLS]
+        if not valid:
+            print(f"  ⚠ Geçersiz ağırlık(lar): {args.weights}. Geçerliler: {list(PRODUCT_URLS)}")
+            sys.exit(1)
+        active_urls = {w: PRODUCT_URLS[w] for w in valid}
+        print(f"  🎯 Test modu — sadece: {valid}  (search devre dışı)\n")
+
+    products = await scrape_all(active_urls, skip_search=bool(args.weights))
     if not products:
         print("No results to display.")
         return
@@ -2977,6 +3021,11 @@ def main() -> None:
     parser.add_argument(
         "--no-terminal", action="store_true",
         help="Terminal çıktısını gizle (yalnızca HTML modu)",
+    )
+    parser.add_argument(
+        "--weights", metavar="W", nargs="+",
+        help="Sadece belirtilen ağırlıkları tara (örn: --weights 1g  veya  --weights 1g 5g). "
+             "Search mode otomatik devre dışı kalır.",
     )
     args = parser.parse_args()
     asyncio.run(_main(args))
