@@ -21,5 +21,28 @@
       "price": 147202.66,
       "site": "Hepsiburada"
     }
+  },
+  "2026-03-21": {
+    "gold": 5863.74,
+    "5g": {
+      "pgr": 7120.24,
+      "price": 35601.22,
+      "site": "N11"
+    },
+    "10g": {
+      "pgr": 7213.09,
+      "price": 72130.91,
+      "site": "Idefix"
+    },
+    "15g": {
+      "pgr": 7072.63,
+      "price": 106089.44,
+      "site": "Hepsiburada"
+    },
+    "20g": {
+      "pgr": 7071.18,
+      "price": 141423.61,
+      "site": "Hepsiburada"
+    }
   }
 }
