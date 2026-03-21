@@ -2704,27 +2704,32 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 
     ga_rows  = "".join(_deal_row(d, "bg-warning text-dark", "btn-outline-warning")
                        for d in gram_altin_deals) or '<span class="text-muted small">Veri yok</span>'
-    bil_rows = "".join(_deal_row(d, "bg-secondary", "btn-outline-secondary")
-                       for d in bilezik_deals) or '<span class="text-muted small">Veri yok</span>'
+    bil_all  = [_deal_row(d, "bg-secondary", "btn-outline-secondary") for d in bilezik_deals]
+    mid = (len(bil_all) + 1) // 2
+    bil_rows_left  = "".join(bil_all[:mid])  or '<span class="text-muted small">Veri yok</span>'
+    bil_rows_right = "".join(bil_all[mid:]) or ""
 
     _best_deals_html = f"""
   <div class="card mb-4 border-0 shadow-sm">
-    <div class="card-header bg-dark text-white fw-bold">&#9989; En İyi Fırsatlar</div>
-    <div class="card-body py-2">
-      <div class="row g-3">
-        <div class="col-12 col-md-4">
-          <div class="d-flex align-items-center gap-1 mb-2">
+    <div class="card-header bg-dark text-white fw-bold py-2">&#9989; En İyi Fırsatlar</div>
+    <div class="card-body p-2 p-md-3">
+      <div class="row g-2">
+        <div class="col-12 col-md-4 border-end-md">
+          <div class="d-flex align-items-center gap-1 mb-1">
             <span>&#128142;</span>
-            <span class="fw-semibold small text-warning">GRAM ALTIN</span>
+            <span class="fw-semibold small text-warning" style="letter-spacing:.03em">GRAM ALTIN</span>
           </div>
           {ga_rows}
         </div>
         <div class="col-12 col-md-8">
-          <div class="d-flex align-items-center gap-1 mb-2">
+          <div class="d-flex align-items-center gap-1 mb-1">
             <span>&#128317;</span>
-            <span class="fw-semibold small text-info">BİLEZİK</span>
+            <span class="fw-semibold small text-info" style="letter-spacing:.03em">BİLEZİK</span>
           </div>
-          {bil_rows}
+          <div class="row g-0">
+            <div class="col-12 col-sm-6">{bil_rows_left}</div>
+            <div class="col-12 col-sm-6">{bil_rows_right}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2735,7 +2740,7 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>22 Ayar Altın Bilezik Fiyat Karşılaştırma</title>
+  <title>Altın Fiyat Karşılaştırma — Gram Altın & Bilezik</title>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3674Q13XZX"></script>
   <script>
@@ -2778,13 +2783,13 @@ def generate_html(products: List[Product], live_gold_price: Optional[float] = No
 
 <div class="hero">
   <div class="container">
-    <h1>💛 22 Ayar Altın Bilezik Fiyat Karşılaştırma</h1>
+    <h1>💛 Altın Fiyat Karşılaştırma</h1>
+    <p class="updated-badge mb-0" style="opacity:.7;font-size:.8rem;">Gram Altın (24 Ayar) &nbsp;·&nbsp; Bilezik (22 Ayar)</p>
     <p class="updated-badge mb-1">
       🕐 Son güncelleme: <strong>{ts}</strong>
     </p>
     <p class="updated-badge mb-0 opacity-75">
-      Hepsiburada · Amazon TR · N11 · Idefix · Trendyol &nbsp;|&nbsp;
-      Sadece stokta olan ürünler gösterilmektedir
+      Hepsiburada · Amazon TR · N11 · Idefix · Trendyol &nbsp;|&nbsp; Sadece stokta olan ürünler
     </p>
     {gold_hero_block}
   </div>
