@@ -385,5 +385,33 @@
       "price": 140624.2,
       "site": "Trendyol"
     }
+  },
+  "2026-04-03": {
+    "gold": 6141.4,
+    "1g": {
+      "pgr": 7522.49,
+      "price": 7522.49,
+      "site": "N11"
+    },
+    "5g": {
+      "pgr": 7300.2,
+      "price": 36501.0,
+      "site": "Idefix"
+    },
+    "10g": {
+      "pgr": 6240.56,
+      "price": 62405.6,
+      "site": "Trendyol"
+    },
+    "15g": {
+      "pgr": 7031.09,
+      "price": 105466.29,
+      "site": "Trendyol"
+    },
+    "20g": {
+      "pgr": 7031.11,
+      "price": 140622.14,
+      "site": "Trendyol"
+    }
   }
 }
